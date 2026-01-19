@@ -90,6 +90,8 @@ jobs:
           # 保存到环境变量
           echo "REMOTE_WORKER_HASH=$REMOTE_HASH" >> $GITHUB_ENV
           echo "REMOTE_FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          # 提前截取哈希前16位，避免在表达式中出错
+          echo "REMOTE_HASH_SHORT=${REMOTE_HASH:0:16}" >> $GITHUB_ENV
 
       - name: 🌐 下载远程 README.md（带校验）
         id: download_readme
@@ -193,9 +195,9 @@ jobs:
             exit 0
           fi
           
-          # 提交并推送
+          # 提交并推送（使用提前截取的短哈希）
           git commit -m "🔄 Auto Update Worker
-          • 远程哈希: ${{ env.REMOTE_WORKER_HASH:0:16 }}...
+          • 远程哈希: ${{ env.REMOTE_HASH_SHORT }}...
           • 文件大小: ${{ env.REMOTE_FILE_SIZE }} 字节
           • 更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
           git push
@@ -204,7 +206,8 @@ jobs:
       - name: 🎯 结果通知
         run: |
           if [[ "${{ env.UPDATE_NEEDED }}" == "true" ]]; then
-            echo "🎉 更新完成！远程哈希: ${{ env.REMOTE_WORKER_HASH:0:16 }}..."
+            # 使用提前截取的短哈希
+            echo "🎉 更新完成！远程哈希: ${{ env.REMOTE_HASH_SHORT }}..."
           else
             echo "😴 无需更新，本地哈希与远程一致"
           fi
