@@ -1,8 +1,6 @@
     import { connect } from 'cloudflare:sockets';
-
     let at = '351c9981-04b6-4103-aa4b-864aa9c91469';
     let fallbackAddress = '';
-    let fallbackPort = '443';
     let socks5Config = '';
     let customPreferredIPs = [];
     let customPreferredDomains = [];
@@ -19,7 +17,9 @@
     let ev = true;   
     let et = false; 
     let ex = false;  
-    let tp = '';  
+    let tp = '';
+    // 启用ECH功能（true启用，false禁用）
+    let enableECH = false;  
 
     let scu = 'https://url.v1.mk/sub';  
     // 远程配置URL（硬编码）
@@ -330,17 +330,7 @@
                 
                 const envFallback = getConfigValue('p', env.p || env.P);
                 if (envFallback) {
-                    const fallbackValue = envFallback.toLowerCase();
-                    if (fallbackValue.includes(']:')) {
-                        const lastColonIndex = fallbackValue.lastIndexOf(':');
-                        fallbackPort = fallbackValue.slice(lastColonIndex + 1);
-                        fallbackAddress = fallbackValue.slice(0, lastColonIndex);
-                    } else if (!fallbackValue.includes(']:') && !fallbackValue.includes(']')) {
-                        [fallbackAddress, fallbackPort = '443'] = fallbackValue.split(':');
-                    } else {
-                        fallbackAddress = fallbackValue;
-                        fallbackPort = '443';
-                    }
+                    fallbackAddress = envFallback.trim();
                 }
 
                 socks5Config = getConfigValue('s', env.s || env.S) || socks5Config;
@@ -444,6 +434,17 @@
                 const githubIPsControl = getConfigValue('egi', env.egi);
                 if (githubIPsControl !== undefined && githubIPsControl !== '') {
                     egi = githubIPsControl !== 'no' && githubIPsControl !== false && githubIPsControl !== 'false';
+                }
+                
+                const echControl = getConfigValue('ech', env.ech);
+                if (echControl !== undefined && echControl !== '') {
+                    enableECH = echControl === 'yes' || echControl === true || echControl === 'true';
+                }
+                
+                // 如果启用了ECH，自动启用仅TLS模式（避免80端口干扰）
+                // ECH需要TLS才能工作，所以必须禁用非TLS节点
+                if (enableECH) {
+                    disableNonTLS = true;
                 }
                 
                 if (!ev && !et && !ex) {
@@ -780,9 +781,8 @@
             }
             .matrix-bg {
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: linear-gradient(45deg, #000 0%, #001100 50%, #000 100%);
+                background: #000;
                 z-index: -1;
-                animation: bg-pulse 8s ease-in-out infinite;
             }
             @keyframes bg-pulse {
                 0%, 100% { background: linear-gradient(45deg, #000 0%, #001100 50%, #000 100%); }
@@ -790,9 +790,9 @@
             }
             .matrix-rain {
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,0.03) 2px, rgba(0,255,0,0.03) 4px);
-                animation: matrix-fall 20s linear infinite;
+                background: transparent;
                 z-index: -1;
+                display: none;
             }
             @keyframes matrix-fall {
                 0% { transform: translateY(-100%); }
@@ -802,12 +802,12 @@
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
                 pointer-events: none; z-index: -1;
                 overflow: hidden;
+                display: none;
             }
             .matrix-column {
                 position: absolute; top: -100%; left: 0;
                 color: #00ff00; font-family: "Courier New", monospace;
                 font-size: 14px; line-height: 1.2;
-                animation: matrix-drop 15s linear infinite;
                 text-shadow: 0 0 5px #00ff00;
             }
             @keyframes matrix-drop {
@@ -880,7 +880,7 @@
             }
             .terminal-cursor {
                 display: inline-block; width: 8px; height: 16px;
-                background: #00ff00; animation: blink 1s infinite;
+                background: #00ff00;
                 margin-left: 2px;
             }
             @keyframes blink {
@@ -900,7 +900,6 @@
                 position: fixed; top: 20px; right: 20px;
                 color: #00ff00; font-family: "Courier New", monospace;
                 font-size: 0.8rem; opacity: 0.6;
-                animation: matrix-flicker 3s infinite;
             }
             @keyframes matrix-flicker {
                 0%, 100% { opacity: 0.6; }
@@ -1118,8 +1117,6 @@
                 });
             
             document.addEventListener('DOMContentLoaded', function() {
-                createMatrixRain();
-                
                 const input = document.getElementById('uuidInput');
                 input.focus();
                 input.addEventListener('keypress', function(e) {
@@ -1209,6 +1206,442 @@
         return btoa(links.join('\n'));
     }
 
+    // 解析 VLESS/Trojan 链接并生成 Clash 节点配置
+    function parseLinkToClashNode(link) {
+        try {
+            // 解析 VLESS 链接
+            if (link.startsWith('vless://')) {
+                const url = new URL(link);
+                const name = decodeURIComponent(url.hash.substring(1));
+                const uuid = url.username;
+                const server = url.hostname;
+                const port = parseInt(url.port) || 443;
+                const params = new URLSearchParams(url.search);
+                
+                const tls = params.get('security') === 'tls' || params.get('tls') === 'true';
+                const network = params.get('type') || 'ws';
+                const path = params.get('path') || '/?ed=2048';
+                const host = params.get('host') || server;
+                const servername = params.get('sni') || host;
+                const alpn = params.get('alpn') || 'h3,h2,http/1.1';
+                const fingerprint = params.get('fp') || params.get('client-fingerprint') || 'chrome';
+                const ech = params.get('ech');
+                
+                const node = {
+                    name: name,
+                    type: 'vless',
+                    server: server,
+                    port: port,
+                    uuid: uuid,
+                    tls: tls,
+                    network: network,
+                    'client-fingerprint': fingerprint
+                };
+                
+                if (tls) {
+                    node.servername = servername;
+                    node.alpn = alpn.split(',').map(a => a.trim());
+                    node['skip-cert-verify'] = false;
+                }
+                
+                if (network === 'ws') {
+                    node['ws-opts'] = {
+                        path: path,
+                        headers: {
+                            Host: host
+                        }
+                    };
+                }
+                
+                if (ech) {
+                    node['ech-opts'] = {
+                        enable: true
+                    };
+                }
+                
+                return node;
+            }
+            
+            // 解析 Trojan 链接
+            if (link.startsWith('trojan://')) {
+                const url = new URL(link);
+                const name = decodeURIComponent(url.hash.substring(1));
+                const password = url.username;
+                const server = url.hostname;
+                const port = parseInt(url.port) || 443;
+                const params = new URLSearchParams(url.search);
+                
+                const network = params.get('type') || 'ws';
+                const path = params.get('path') || '/?ed=2048';
+                const host = params.get('host') || server;
+                const sni = params.get('sni') || host;
+                const alpn = params.get('alpn') || 'h3,h2,http/1.1';
+                const ech = params.get('ech');
+                
+                const node = {
+                    name: name,
+                    type: 'trojan',
+                    server: server,
+                    port: port,
+                    password: password,
+                    network: network,
+                    sni: sni,
+                    alpn: alpn.split(',').map(a => a.trim()),
+                    'skip-cert-verify': false
+                };
+                
+                if (network === 'ws') {
+                    node['ws-opts'] = {
+                        path: path,
+                        headers: {
+                            Host: host
+                        }
+                    };
+                }
+                
+                if (ech) {
+                    node['ech-opts'] = {
+                        enable: true
+                    };
+                }
+                
+                return node;
+            }
+        } catch (e) {
+            return null;
+        }
+        return null;
+    }
+
+    // 生成 Clash 配置
+    async function generateClashConfig(links, request, user) {
+        // 如果 ECH 未开启，使用订阅转换服务
+        if (!enableECH) {
+            // 返回一个重定向 URL，让前端使用订阅转换服务
+            // 或者直接调用订阅转换服务
+            const subscriptionUrl = new URL(request.url);
+            subscriptionUrl.pathname = subscriptionUrl.pathname.replace(/\/sub$/, '') + '/sub';
+            subscriptionUrl.searchParams.set('target', 'base64');
+            const encodedUrl = encodeURIComponent(subscriptionUrl.toString());
+            const converterUrl = `${scu}?target=clash&url=${encodedUrl}&insert=false&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true`;
+            
+            try {
+                const response = await fetch(converterUrl);
+                if (response.ok) {
+                    return await response.text();
+                }
+            } catch (e) {
+                // 如果订阅转换失败，fallback 到本地生成
+            }
+        }
+        
+        // ECH 开启时，使用本地模板生成
+        const templateUrl = 'https://raw.githubusercontent.com/byJoey/test/refs/heads/main/%E6%A8%A1%E6%9D%BF.yaml';
+        
+        try {
+            // 获取模板
+            const templateResponse = await fetch(templateUrl);
+            if (!templateResponse.ok) {
+                throw new Error('无法获取模板文件');
+            }
+            let template = await templateResponse.text();
+            
+            // 解析链接生成节点配置
+            const nodes = [];
+            for (const link of links) {
+                const node = parseLinkToClashNode(link);
+                if (node) {
+                    nodes.push(node);
+                }
+            }
+            
+            if (nodes.length === 0) {
+                throw new Error('没有有效的节点');
+            }
+            
+            // 确保节点名称唯一，处理重复名称
+            const usedNames = new Set();
+            nodes.forEach((node, index) => {
+                let uniqueName = node.name;
+                // 如果名称已使用，添加服务器地址和端口来区分
+                if (usedNames.has(uniqueName)) {
+                    uniqueName = `${node.name}-${node.server}:${node.port}`;
+                    // 如果添加了服务器和端口后还是重复，添加索引
+                    let counter = 1;
+                    while (usedNames.has(uniqueName)) {
+                        uniqueName = `${node.name}-${node.server}:${node.port}-${counter}`;
+                        counter++;
+                    }
+                }
+                usedNames.add(uniqueName);
+                node.uniqueName = uniqueName;
+            });
+            
+            // 将节点转换为 YAML 格式（单行格式，匹配模板）
+            const nodesYaml = nodes.map(node => {
+                const props = [];
+                
+                // 基本属性，使用唯一名称（匹配模板格式，不加引号）
+                props.push(`name: ${node.uniqueName}`);
+                props.push(`server: ${node.server}`);
+                props.push(`port: ${node.port}`);
+                props.push(`type: ${node.type}`);
+                
+                if (node.type === 'vless') {
+                    props.push(`uuid: ${node.uuid}`);
+                    if (node.tls) {
+                        props.push(`tls: true`);
+                        // alpn 格式：URL编码的逗号分隔值，如 h3%2Ch2%2Chttp%2F1.1
+                        const alpnStr = node.alpn.map(a => encodeURIComponent(a)).join('%2C');
+                        props.push(`alpn: [${alpnStr}]`);
+                        props.push(`tfo: false`);
+                        props.push(`skip-cert-verify: false`);
+                        props.push(`servername: ${node.servername}`);
+                        props.push(`client-fingerprint: ${node['client-fingerprint']}`);
+                    }
+                    if (node.network === 'ws') {
+                        props.push(`network: ws`);
+                        const path = node['ws-opts'].path;
+                        const host = node['ws-opts'].headers.Host;
+                        // ws-opts 格式：{path: "...", headers: {Host: "..."}}
+                        props.push(`ws-opts: {path: "${path}", headers: {Host: ${host}}}`);
+                    }
+                    if (node['ech-opts']) {
+                        props.push(`ech-opts: {enable: true}`);
+                    }
+                } else if (node.type === 'trojan') {
+                    props.push(`password: ${node.password}`);
+                    props.push(`sni: ${node.sni}`);
+                    // alpn 格式：URL编码的逗号分隔值
+                    const alpnStr = node.alpn.map(a => encodeURIComponent(a)).join('%2C');
+                    props.push(`alpn: [${alpnStr}]`);
+                    props.push(`skip-cert-verify: false`);
+                    if (node.network === 'ws') {
+                        props.push(`network: ws`);
+                        const path = node['ws-opts'].path;
+                        const host = node['ws-opts'].headers.Host;
+                        props.push(`ws-opts: {path: "${path}", headers: {Host: ${host}}}`);
+                    }
+                    if (node['ech-opts']) {
+                        props.push(`ech-opts: {enable: true}`);
+                    }
+                }
+                
+                // 生成单行格式：  - {prop1: value1, prop2: value2, ...}
+                return `  - {${props.join(', ')}}`;
+            }).join('\n');
+            
+            // 替换模板中的 proxies 部分
+            // 查找 proxies: 后面的内容，直到下一个顶级键
+            const proxiesRegex = /^proxies:\s*$/m;
+            const match = template.match(proxiesRegex);
+            
+            if (match) {
+                const startIndex = match.index + match[0].length;
+                // 查找下一个顶级键（以字母开头，后面跟冒号，前面可能有空格）
+                const nextKeyRegex = /^\s*[a-zA-Z][a-zA-Z0-9_-]*:\s*$/m;
+                const nextMatch = template.substring(startIndex).match(nextKeyRegex);
+                
+                let endIndex;
+                if (nextMatch) {
+                    endIndex = startIndex + nextMatch.index;
+                } else {
+                    endIndex = template.length;
+                }
+                
+                // 替换 proxies 部分
+                template = template.substring(0, startIndex) + '\n' + nodesYaml + '\n' + template.substring(endIndex);
+            } else {
+                // 如果没有找到 proxies，在适当位置插入
+                const insertRegex = /^proxies:\s*$/m;
+                if (!template.match(insertRegex)) {
+                    // 在 dns 部分之后插入
+                    const dnsRegex = /^dns:\s*$/m;
+                    const dnsMatch = template.match(dnsRegex);
+                    if (dnsMatch) {
+                        const insertIndex = template.indexOf('\n', dnsMatch.index + dnsMatch[0].length);
+                        const dnsEndRegex = /^[a-zA-Z]/m;
+                        const dnsEndMatch = template.substring(insertIndex + 1).match(dnsEndRegex);
+                        let dnsEndIndex;
+                        if (dnsEndMatch) {
+                            dnsEndIndex = insertIndex + 1 + dnsEndMatch.index;
+                        } else {
+                            dnsEndIndex = template.length;
+                        }
+                        template = template.substring(0, dnsEndIndex) + '\nproxies:\n' + nodesYaml + '\n' + template.substring(dnsEndIndex);
+                    }
+                }
+            }
+            
+            return template;
+        } catch (error) {
+            // 如果本地生成失败，fallback 到订阅转换服务
+            if (request) {
+                const subscriptionUrl = new URL(request.url);
+                subscriptionUrl.pathname = subscriptionUrl.pathname.replace(/\/sub$/, '') + '/sub';
+                subscriptionUrl.searchParams.set('target', 'base64');
+                const encodedUrl = encodeURIComponent(subscriptionUrl.toString());
+                const converterUrl = `${scu}?target=clash&url=${encodedUrl}&insert=false&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true`;
+                
+                const response = await fetch(converterUrl);
+                if (response.ok) {
+                    return await response.text();
+                }
+            }
+            
+            throw error;
+        }
+    }
+
+    // 全局变量存储ECH调试信息
+    let echDebugInfo = '';
+    
+    async function fetchECHConfig(domain) {
+        if (!enableECH) {
+            echDebugInfo = 'ECH功能已禁用';
+            return null;
+        }
+        
+        echDebugInfo = '';
+        const debugSteps = [];
+        
+        try {
+            // 优先使用 Google DNS 查询 cloudflare-ech.com 的 ECH 配置
+            debugSteps.push('尝试使用 Google DNS 查询 cloudflare-ech.com...');
+            const echDomainUrl = `https://v.recipes/dns/dns.google/dns-query?name=cloudflare-ech.com&type=65`;
+            const echResponse = await fetch(echDomainUrl, {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            
+            debugSteps.push(`Google DNS 响应状态: ${echResponse.status}`);
+            
+            if (echResponse.ok) {
+                const echData = await echResponse.json();
+                debugSteps.push(`Google DNS 返回数据: ${JSON.stringify(echData).substring(0, 200)}...`);
+                
+                if (echData.Answer && echData.Answer.length > 0) {
+                    debugSteps.push(`找到 ${echData.Answer.length} 条答案记录`);
+                    for (const answer of echData.Answer) {
+                        if (answer.data) {
+                            debugSteps.push(`解析答案数据: ${typeof answer.data}, 长度: ${String(answer.data).length}`);
+                            // Google DNS 返回的数据格式可能不同，需要解析
+                            const dataStr = typeof answer.data === 'string' ? answer.data : JSON.stringify(answer.data);
+                            const echMatch = dataStr.match(/ech=([^\s"']+)/);
+                            if (echMatch && echMatch[1]) {
+                                echDebugInfo = debugSteps.join('\\n') + '\\n✅ 成功从 Google DNS 获取 ECH 配置';
+                                return echMatch[1];
+                            }
+                            // 如果没有找到，尝试直接使用 data（可能是 base64 编码的）
+                            if (answer.data && !dataStr.includes('ech=')) {
+                                try {
+                                    const decoded = atob(answer.data);
+                                    debugSteps.push(`尝试 base64 解码，解码后长度: ${decoded.length}`);
+                                    const decodedMatch = decoded.match(/ech=([^\s"']+)/);
+                                    if (decodedMatch && decodedMatch[1]) {
+                                        echDebugInfo = debugSteps.join('\\n') + '\\n✅ 成功从 Google DNS (base64解码) 获取 ECH 配置';
+                                        return decodedMatch[1];
+                                    }
+                                } catch (e) {
+                                    debugSteps.push(`base64 解码失败: ${e.message}`);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    debugSteps.push('Google DNS 未返回答案记录');
+                }
+            } else {
+                debugSteps.push(`Google DNS 请求失败: ${echResponse.status}`);
+            }
+            
+            // 如果 cloudflare-ech.com 查询失败，尝试使用 Google DNS 查询目标域名的 HTTPS 记录
+            debugSteps.push(`尝试使用 Google DNS 查询目标域名 ${domain}...`);
+            const dohUrl = `https://v.recipes/dns/dns.google/dns-query?name=${encodeURIComponent(domain)}&type=65`;
+            const response = await fetch(dohUrl, {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            
+            debugSteps.push(`Google DNS (目标域名) 响应状态: ${response.status}`);
+            
+            if (response.ok) {
+                const data = await response.json();
+                debugSteps.push(`Google DNS (目标域名) 返回数据: ${JSON.stringify(data).substring(0, 200)}...`);
+                
+                if (data.Answer && data.Answer.length > 0) {
+                    debugSteps.push(`找到 ${data.Answer.length} 条答案记录`);
+                    for (const answer of data.Answer) {
+                        if (answer.data) {
+                            const dataStr = typeof answer.data === 'string' ? answer.data : JSON.stringify(answer.data);
+                            const echMatch = dataStr.match(/ech=([^\s"']+)/);
+                            if (echMatch && echMatch[1]) {
+                                echDebugInfo = debugSteps.join('\\n') + '\\n✅ 成功从 Google DNS (目标域名) 获取 ECH 配置';
+                                return echMatch[1];
+                            }
+                            // 尝试 base64 解码
+                            try {
+                                const decoded = atob(answer.data);
+                                const decodedMatch = decoded.match(/ech=([^\s"']+)/);
+                                if (decodedMatch && decodedMatch[1]) {
+                                    echDebugInfo = debugSteps.join('\\n') + '\\n✅ 成功从 Google DNS (目标域名, base64解码) 获取 ECH 配置';
+                                    return decodedMatch[1];
+                                }
+                            } catch (e) {
+                                debugSteps.push(`base64 解码失败: ${e.message}`);
+                            }
+                        }
+                    }
+                } else {
+                    debugSteps.push('Google DNS (目标域名) 未返回答案记录');
+                }
+            } else {
+                debugSteps.push(`Google DNS (目标域名) 请求失败: ${response.status}`);
+            }
+            
+            // 如果 Google DNS 失败，尝试使用 Cloudflare DNS 作为备选
+            debugSteps.push('尝试使用 Cloudflare DNS 作为备选...');
+            const cfEchUrl = `https://cloudflare-dns.com/dns-query?name=cloudflare-ech.com&type=65`;
+            const cfResponse = await fetch(cfEchUrl, {
+                headers: {
+                    'Accept': 'application/dns-json'
+                }
+            });
+            
+            debugSteps.push(`Cloudflare DNS 响应状态: ${cfResponse.status}`);
+            
+            if (cfResponse.ok) {
+                const cfData = await cfResponse.json();
+                debugSteps.push(`Cloudflare DNS 返回数据: ${JSON.stringify(cfData).substring(0, 200)}...`);
+                
+                if (cfData.Answer && cfData.Answer.length > 0) {
+                    debugSteps.push(`找到 ${cfData.Answer.length} 条答案记录`);
+                    for (const answer of cfData.Answer) {
+                        if (answer.data) {
+                            const echMatch = answer.data.match(/ech=([^\s"']+)/);
+                            if (echMatch && echMatch[1]) {
+                                echDebugInfo = debugSteps.join('\\n') + '\\n✅ 成功从 Cloudflare DNS 获取 ECH 配置';
+                                return echMatch[1];
+                            }
+                        }
+                    }
+                } else {
+                    debugSteps.push('Cloudflare DNS 未返回答案记录');
+                }
+            } else {
+                debugSteps.push(`Cloudflare DNS 请求失败: ${cfResponse.status}`);
+            }
+            
+            echDebugInfo = debugSteps.join('\\n') + '\\n❌ 所有DNS查询均失败，未获取到ECH配置';
+            return null;
+        } catch (error) {
+            echDebugInfo = debugSteps.join('\\n') + '\\n❌ 获取ECH配置时发生错误: ' + error.message;
+            return null;
+        }
+    }
+
     async function handleSubscriptionRequest(request, user, url = null) {
         if (!url) url = new URL(request.url);
         
@@ -1216,15 +1649,21 @@
         const workerDomain = url.hostname;
         const target = url.searchParams.get('target') || 'base64';
 
+        // 如果启用了ECH，直接使用固定值
+        let echConfig = null;
+        if (enableECH) {
+            echConfig = `cloudflare-ech.com+https://dns.alidns.com/dns-query`;
+        }
+
         async function addNodesFromList(list) {
             if (ev) {
-                finalLinks.push(...generateLinksFromSource(list, user, workerDomain));
+                finalLinks.push(...generateLinksFromSource(list, user, workerDomain, echConfig));
             }
             if (et) {
-                finalLinks.push(...await generateTrojanLinksFromSource(list, user, workerDomain));
+                finalLinks.push(...await generateTrojanLinksFromSource(list, user, workerDomain, echConfig));
             }
             if (ex) {
-                finalLinks.push(...generateXhttpLinksFromSource(list, user, workerDomain));
+                finalLinks.push(...generateXhttpLinksFromSource(list, user, workerDomain, echConfig));
             }
         }
 
@@ -1242,9 +1681,8 @@
                 
                 const bestBackupIP = await getBestBackupIP(currentWorkerRegion);
                 if (bestBackupIP) {
-                    fallbackAddress = bestBackupIP.domain;
-                    fallbackPort = bestBackupIP.port.toString();
-                    const backupList = [{ ip: fallbackAddress, isp: 'ProxyIP-' + currentWorkerRegion }];
+                    fallbackAddress = bestBackupIP.domain + ':' + bestBackupIP.port;
+                    const backupList = [{ ip: bestBackupIP.domain, isp: 'ProxyIP-' + currentWorkerRegion }];
                     await addNodesFromList(backupList);
                 } else {
                     const nativeList = [{ ip: workerDomain, isp: '原生地址' }];
@@ -1288,10 +1726,9 @@
                     
                     const bestBackupIP = await getBestBackupIP(currentWorkerRegion);
                     if (bestBackupIP) {
-                        fallbackAddress = bestBackupIP.domain;
-                        fallbackPort = bestBackupIP.port.toString();
+                        fallbackAddress = bestBackupIP.domain + ':' + bestBackupIP.port;
                         
-                        const backupList = [{ ip: fallbackAddress, isp: 'ProxyIP-' + currentWorkerRegion }];
+                        const backupList = [{ ip: bestBackupIP.domain, isp: 'ProxyIP-' + currentWorkerRegion }];
                             await addNodesFromList(backupList);
                         }
                     }
@@ -1303,10 +1740,10 @@
                 const newIPList = await fetchAndParseNewIPs();
                 if (newIPList.length > 0) {
                         if (ev) {
-                    finalLinks.push(...generateLinksFromNewIPs(newIPList, user, workerDomain));
+                    finalLinks.push(...generateLinksFromNewIPs(newIPList, user, workerDomain, echConfig));
                         }
                         if (et) {
-                            finalLinks.push(...await generateTrojanLinksFromNewIPs(newIPList, user, workerDomain));
+                            finalLinks.push(...await generateTrojanLinksFromNewIPs(newIPList, user, workerDomain, echConfig));
                         }
                 }
             } catch (error) {
@@ -1316,10 +1753,9 @@
                 
                 const bestBackupIP = await getBestBackupIP(currentWorkerRegion);
                 if (bestBackupIP) {
-                    fallbackAddress = bestBackupIP.domain;
-                    fallbackPort = bestBackupIP.port.toString();
+                    fallbackAddress = bestBackupIP.domain + ':' + bestBackupIP.port;
                     
-                    const backupList = [{ ip: fallbackAddress, isp: 'ProxyIP-' + currentWorkerRegion }];
+                    const backupList = [{ ip: bestBackupIP.domain, isp: 'ProxyIP-' + currentWorkerRegion }];
                         await addNodesFromList(backupList);
                     }
                 }
@@ -1339,7 +1775,7 @@
         switch (target.toLowerCase()) {
             case atob('Y2xhc2g='):
             case atob('Y2xhc2hy'):
-                subscriptionContent = await generateClashConfig(finalLinks);
+                subscriptionContent = await generateClashConfig(finalLinks, request, user);
                 contentType = 'text/yaml; charset=utf-8';
                 break;
             case atob('c3VyZ2U='):
@@ -1367,15 +1803,25 @@
                 subscriptionContent = btoa(finalLinks.join('\n'));
         }
         
+        const responseHeaders = { 
+            'Content-Type': contentType,
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        };
+        
+        // 添加ECH状态到响应头
+        if (enableECH) {
+            responseHeaders['X-ECH-Status'] = 'ENABLED';
+            if (echConfig) {
+                responseHeaders['X-ECH-Config-Length'] = String(echConfig.length);
+            }
+        }
+        
         return new Response(subscriptionContent, {
-            headers: { 
-                'Content-Type': contentType,
-                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-            },
+            headers: responseHeaders,
         });
     }
 
-    function generateLinksFromSource(list, user, workerDomain) {
+    function generateLinksFromSource(list, user, workerDomain, echConfig = null) {
         
         const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
         const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -1429,11 +1875,18 @@
                         encryption: 'none', 
                         security: 'tls', 
                         sni: workerDomain, 
-                        fp: 'chrome', 
+                        fp: enableECH ? 'chrome' : 'randomized',
                         type: 'ws', 
                         host: workerDomain, 
                         path: wsPath
                     });
+                    
+                    // 如果启用了ECH，添加ech参数（ECH需要伪装成Chrome浏览器）
+                    if (enableECH) {
+                        wsParams.set('alpn', 'h3,h2,http/1.1');
+                        wsParams.set('ech', `cloudflare-ech.com+https://dns.alidns.com/dns-query`);
+                    }
+                    
                     links.push(`${proto}://${user}@${safeIP}:${port}?${wsParams.toString()}#${encodeURIComponent(wsNodeName)}`);
                 } else {
                     
@@ -1452,7 +1905,7 @@
         return links;
     }
 
-    async function generateTrojanLinksFromSource(list, user, workerDomain) {
+    async function generateTrojanLinksFromSource(list, user, workerDomain, echConfig = null) {
         
         const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
         const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -1501,11 +1954,18 @@
                     const wsParams = new URLSearchParams({ 
                         security: 'tls', 
                         sni: workerDomain, 
-                        fp: 'chrome', 
+                        fp: 'chrome',
                         type: 'ws', 
                         host: workerDomain, 
                         path: wsPath
                     });
+                    
+                    // 如果启用了ECH，添加ech参数（ECH需要伪装成Chrome浏览器）
+                    if (enableECH) {
+                        wsParams.set('alpn', 'h3,h2,http/1.1');
+                        wsParams.set('ech', `cloudflare-ech.com+https://dns.alidns.com/dns-query`);
+                    }
+                    
                     links.push(`${atob('dHJvamFuOi8v')}${password}@${safeIP}:${port}?${wsParams.toString()}#${encodeURIComponent(wsNodeName)}`);
                 } else {
                     
@@ -1694,9 +2154,10 @@
                     return;
                 } catch (socksErr) {
                     let backupHost, backupPort;
-                    if (fallbackAddress && fallbackAddress.trim() && fallbackPort) {
-                        backupHost = fallbackAddress;
-                        backupPort = parseInt(fallbackPort, 10) || portNum;
+                    if (fallbackAddress && fallbackAddress.trim()) {
+                        const parsed = parseAddressAndPort(fallbackAddress);
+                        backupHost = parsed.address;
+                        backupPort = parsed.port || portNum;
                     } else {
                         const bestBackupIP = await getBestBackupIP(currentWorkerRegion);
                         backupHost = bestBackupIP ? bestBackupIP.domain : host;
@@ -1714,9 +2175,10 @@
                 }
             } else {
                 let backupHost, backupPort;
-                if (fallbackAddress && fallbackAddress.trim() && fallbackPort) {
-                    backupHost = fallbackAddress;
-                    backupPort = parseInt(fallbackPort, 10) || portNum;
+                if (fallbackAddress && fallbackAddress.trim()) {
+                    const parsed = parseAddressAndPort(fallbackAddress);
+                    backupHost = parsed.address;
+                    backupPort = parsed.port || portNum;
                 } else {
                     const bestBackupIP = await getBestBackupIP(currentWorkerRegion);
                     backupHost = bestBackupIP ? bestBackupIP.domain : host;
@@ -1975,6 +2437,8 @@
                     trojanPasswordPlaceholder: '留空则自动使用 UUID',
                     trojanPasswordHint: '设置自定义 Trojan 密码。留空则使用 UUID。客户端会自动对密码进行 SHA224 哈希。',
                     protocolHint: '可以同时启用多个协议。订阅将生成选中协议的节点。<br>• VLESS WS: 基于 WebSocket 的标准协议<br>• Trojan: 使用 SHA224 密码认证<br>• xhttp: 基于 HTTP POST 的伪装协议（需要绑定自定义域名并开启 gRPC）',
+                    enableECH: '启用 ECH (Encrypted Client Hello)',
+                    enableECHHint: '启用后，每次刷新订阅时会自动从 DoH 获取最新的 ECH 配置并添加到链接中',
                     saveProtocol: '保存协议配置',
                     subscriptionConverterPlaceholder: '默认: https://url.v1.mk/sub',
                     subscriptionConverterHint: '自定义订阅转换API地址，留空则使用默认地址',
@@ -1999,7 +2463,7 @@
                         KR: '🇰🇷 韩国', DE: '🇩🇪 德国', SE: '🇸🇪 瑞典', NL: '🇳🇱 荷兰',
                         FI: '🇫🇮 芬兰', GB: '🇬🇧 英国'
                     },
-                    terminal: '终端 v2.7',
+                    terminal: '终端 v2.9.2',
                     githubProject: 'GitHub 项目',
                     autoDetectClient: '自动识别',
                 selectionLogicText: '同地区 → 邻近地区 → 其他地区',
@@ -2051,6 +2515,8 @@
                     enableVLESS: 'فعال‌سازی پروتکل VLESS',
                     enableTrojan: 'فعال‌سازی پروتکل Trojan',
                     enableXhttp: 'فعال‌سازی پروتکل xhttp',
+                    enableECH: 'فعال‌سازی ECH (Encrypted Client Hello)',
+                    enableECHHint: 'پس از فعال‌سازی، در هر بار تازه‌سازی اشتراک، پیکربندی ECH به‌روز به‌طور خودکار از DoH دریافت شده و به لینک‌ها اضافه می‌شود',
                     trojanPassword: 'رمز عبور Trojan (اختیاری):',
                     customPath: 'مسیر سفارشی (d):',
                     customIP: 'ProxyIP سفارشی (p):',
@@ -2130,7 +2596,7 @@
                         KR: '🇰🇷 کره جنوبی', DE: '🇩🇪 آلمان', SE: '🇸🇪 سوئد', NL: '🇳🇱 هلند',
                         FI: '🇫🇮 فنلاند', GB: '🇬🇧 بریتانیا'
                     },
-                    terminal: 'ترمینال v2.7',
+                    terminal: 'ترمینال v2.9.2',
                     githubProject: 'پروژه GitHub',
                     autoDetectClient: 'تشخیص خودکار',
                 selectionLogicText: 'هم‌منطقه → منطقه مجاور → سایر مناطق',
@@ -2177,9 +2643,8 @@
             }
             .matrix-bg {
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: linear-gradient(45deg, #000 0%, #001100 50%, #000 100%);
+                background: #000;
                 z-index: -1;
-                animation: bg-pulse 8s ease-in-out infinite;
             }
             @keyframes bg-pulse {
                 0%, 100% { background: linear-gradient(45deg, #000 0%, #001100 50%, #000 100%); }
@@ -2187,9 +2652,9 @@
             }
             .matrix-rain {
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,0.03) 2px, rgba(0,255,0,0.03) 4px);
-                animation: matrix-fall 20s linear infinite;
+                background: transparent;
                 z-index: -1;
+                display: none;
             }
             @keyframes matrix-fall {
                 0% { transform: translateY(-100%); }
@@ -2199,12 +2664,12 @@
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
                 pointer-events: none; z-index: -1;
                 overflow: hidden;
+                display: none;
             }
             .matrix-column {
                 position: absolute; top: -100%; left: 0;
                 color: #00ff00; font-family: "Courier New", monospace;
                 font-size: 14px; line-height: 1.2;
-                animation: matrix-drop 15s linear infinite;
                 text-shadow: 0 0 5px #00ff00;
             }
             @keyframes matrix-drop {
@@ -2231,13 +2696,8 @@
                 font-size: 3.5rem; font-weight: bold;
                 text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00, 0 0 30px #00ff00, 0 0 40px #00ff00;
                 margin-bottom: 10px;
-                animation: matrix-glow 1.5s ease-in-out infinite alternate, matrix-pulse 3s ease-in-out infinite;
                 position: relative;
-                background: linear-gradient(45deg, #00ff00, #00aa00, #00ff00);
-                background-size: 200% 200%;
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
+                color: #00ff00;
             }
             @keyframes matrix-glow {
                 from { text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00, 0 0 30px #00ff00, 0 0 40px #00ff00; }
@@ -2255,7 +2715,6 @@
                 box-shadow: 0 0 30px rgba(0, 255, 0, 0.5), inset 0 0 20px rgba(0, 255, 0, 0.1);
                 position: relative;
                 backdrop-filter: blur(10px);
-                animation: card-glow 4s ease-in-out infinite;
                 box-sizing: border-box;
                 width: 100%;
                 max-width: 100%;
@@ -2267,9 +2726,8 @@
             .card::before {
                 content: ""; position: absolute; top: 0; left: 0;
                 width: 100%; height: 100%;
-                background: linear-gradient(45deg, transparent 49%, #00ff00 50%, transparent 51%);
-                opacity: 0.2; pointer-events: none;
-                animation: scan-line 3s linear infinite;
+                background: none;
+                opacity: 0; pointer-events: none;
             }
             @keyframes scan-line {
                 0% { transform: translateX(-100%); }
@@ -2346,7 +2804,6 @@
                 color: #00ff00; margin-top: 20px; display: none;
                 box-shadow: inset 0 0 15px rgba(0, 255, 0, 0.4), 0 0 20px rgba(0, 255, 0, 0.3);
                 border-radius: 5px;
-                animation: url-glow 2s ease-in-out infinite alternate;
                 position: relative;
                 overflow-wrap: break-word;
                 overflow-x: auto;
@@ -2360,8 +2817,7 @@
             .atob('c3Vic2NyaXB0aW9u')-url::before {
                 content: ""; position: absolute; top: 0; left: -100%;
                 width: 100%; height: 100%;
-                background: linear-gradient(90deg, transparent, rgba(0,255,0,0.1), transparent);
-                animation: url-scan 3s linear infinite;
+                background: none;
             }
             @keyframes url-scan {
                 0% { left: -100%; }
@@ -2371,7 +2827,6 @@
                 position: fixed; top: 20px; right: 20px;
                 color: #00ff00; font-family: "Courier New", monospace;
                 font-size: 0.8rem; opacity: 0.6;
-                animation: matrix-flicker 3s infinite;
             }
             @keyframes matrix-flicker {
                 0%, 100% { opacity: 0.6; }
@@ -2419,6 +2874,7 @@
                         <div id="geoInfo" style="margin: 8px 0; color: #00aa00; font-family: 'Courier New', monospace; font-size: 0.9rem; text-shadow: 0 0 3px #00aa00;">${t.detectionMethod}${t.checking}</div>
                         <div id="backupStatus" style="margin: 8px 0; color: #00ff00; font-family: 'Courier New', monospace; text-shadow: 0 0 3px #00ff00;">${t.proxyIPStatus}${t.checking}</div>
                         <div id="currentIP" style="margin: 8px 0; color: #00ff00; font-family: 'Courier New', monospace; text-shadow: 0 0 3px #00ff00;">${t.currentIP}${t.checking}</div>
+                        <div id="echStatus" style="margin: 8px 0; color: #00ff00; font-family: 'Courier New', monospace; text-shadow: 0 0 3px #00ff00; font-size: 0.9rem;">ECH状态: ${t.checking}</div>
                         <div id="regionMatch" style="margin: 8px 0; color: #00ff00; font-family: 'Courier New', monospace; text-shadow: 0 0 3px #00ff00;">${t.regionMatch}${t.checking}</div>
                         <div id="selectionLogic" style="margin: 8px 0; color: #00aa00; font-family: 'Courier New', monospace; font-size: 0.9rem; text-shadow: 0 0 3px #00aa00;">${t.selectionLogic}${t.selectionLogicText}</div>
                 </div>
@@ -2469,6 +2925,15 @@
                                         <input type="checkbox" id="ex" style="margin-right: 8px; width: 18px; height: 18px; cursor: pointer;">
                                             <span style="font-size: 1.1rem;">${t.enableXhttp}</span>
                                     </label>
+                                </div>
+                                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(0, 255, 0, 0.3);">
+                                    <div style="margin-bottom: 10px;">
+                                        <label style="display: inline-flex; align-items: center; cursor: pointer; color: #00ff00;">
+                                            <input type="checkbox" id="ech" style="margin-right: 8px; width: 18px; height: 18px; cursor: pointer;">
+                                                <span style="font-size: 1.1rem;">${t.enableECH}</span>
+                                        </label>
+                                        <small style="color: #00aa00; font-size: 0.8rem; display: block; margin-top: 5px; margin-left: 26px;">${t.enableECHHint}</small>
+                                    </div>
                                 </div>
                                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(0, 255, 0, 0.3);">
                                         <label style="display: block; margin-bottom: 8px; color: #00ff00; font-size: 0.95rem;">${t.trojanPassword}</label>
@@ -2556,8 +3021,24 @@
                                         <button type="button" id="deselectAllResults" style="background: transparent; border: 1px solid #00aa00; padding: 4px 10px; color: #00aa00; font-size: 0.8rem; cursor: pointer;">${t.deselectAll}</button>
                                     </div>
                                 </div>
+                                <div id="cityFilterContainer" style="margin-bottom: 10px; padding: 10px; background: rgba(0, 20, 0, 0.6); border: 1px solid #00aa00; border-radius: 4px; display: none;">
+                                    <div style="margin-bottom: 8px;">
+                                        <label style="display: inline-flex; align-items: center; cursor: pointer; color: #00ff00; font-size: 0.9rem;">
+                                            <input type="radio" name="cityFilterMode" value="all" checked style="margin-right: 6px; width: 16px; height: 16px; cursor: pointer;">
+                                            <span>${isFarsi ? '全部城市' : '全部城市'}</span>
+                                        </label>
+                                        <label style="display: inline-flex; align-items: center; cursor: pointer; color: #00ff00; font-size: 0.9rem; margin-left: 15px;">
+                                            <input type="radio" name="cityFilterMode" value="fastest10" style="margin-right: 6px; width: 16px; height: 16px; cursor: pointer;">
+                                            <span>${isFarsi ? '只选择最快的10个' : '只选择最快的10个'}</span>
+                                        </label>
+                                    </div>
+                                    <div id="cityCheckboxesContainer" style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 80px; overflow-y: auto; padding: 5px;"></div>
+                                </div>
                                 <div id="latencyResultsList" style="background: rgba(0, 0, 0, 0.5); border: 1px solid #004400; border-radius: 4px; padding: 10px;"></div>
-                                <button type="button" id="addSelectedToYx" style="margin-top: 10px; background: rgba(0, 200, 0, 0.3); border: 1px solid #00ff00; padding: 10px 20px; color: #00ff00; font-family: 'Courier New', monospace; font-weight: bold; cursor: pointer; width: 100%; transition: all 0.3s;">✓ ${t.addSelectedToYx}</button>
+                                <div style="margin-top: 10px; display: flex; gap: 10px;">
+                                    <button type="button" id="overwriteSelectedToYx" style="flex: 1; background: rgba(0, 200, 0, 0.3); border: 1px solid #00ff00; padding: 10px 20px; color: #00ff00; font-family: 'Courier New', monospace; font-weight: bold; cursor: pointer; transition: all 0.3s;">${isFarsi ? '覆盖添加' : '覆盖添加'}</button>
+                                    <button type="button" id="appendSelectedToYx" style="flex: 1; background: rgba(0, 150, 0, 0.3); border: 1px solid #00aa00; padding: 10px 20px; color: #00aa00; font-family: 'Courier New', monospace; font-weight: bold; cursor: pointer; transition: all 0.3s;">${isFarsi ? '追加添加' : '追加添加'}</button>
+                                </div>
                             </div>
                         </div>
                         
@@ -2866,18 +3347,21 @@
                         });
                     }
                 } else {
-                    var encodedUrl = encodeURIComponent(subscriptionUrl);
-                    finalUrl = SUB_CONVERTER_URL + "?target=" + clientType + "&url=" + encodedUrl + "&insert=false&config=" + encodeURIComponent(REMOTE_CONFIG_URL) + "&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true";
-                    var urlElement = document.getElementById("clientSubscriptionUrl");
-                    urlElement.textContent = finalUrl;
-                    urlElement.style.display = "block";
-                    urlElement.style.overflowWrap = "break-word";
-                    urlElement.style.wordBreak = "break-all";
-                    urlElement.style.overflowX = "auto";
-                    urlElement.style.maxWidth = "100%";
-                    urlElement.style.boxSizing = "border-box";
+                    // 检查 ECH 是否开启
+                    var echEnabled = document.getElementById('ech') && document.getElementById('ech').checked;
                     
-                    if (clientType === atob('Y2xhc2g=')) {
+                    // 如果 ECH 开启且是 Clash，直接使用后端接口
+                    if (echEnabled && clientType === atob('Y2xhc2g=')) {
+                        finalUrl = subscriptionUrl + "?target=" + clientType;
+                        var urlElement = document.getElementById("clientSubscriptionUrl");
+                        urlElement.textContent = finalUrl;
+                        urlElement.style.display = "block";
+                        urlElement.style.overflowWrap = "break-word";
+                        urlElement.style.wordBreak = "break-all";
+                        urlElement.style.overflowX = "auto";
+                        urlElement.style.maxWidth = "100%";
+                        urlElement.style.boxSizing = "border-box";
+                        
                         if (clientName === 'STASH') {
                             schemeUrl = 'stash://install?url=' + encodeURIComponent(finalUrl);
                             displayName = 'STASH';
@@ -2885,30 +3369,64 @@
                             schemeUrl = 'clash://install-config?url=' + encodeURIComponent(finalUrl);
                             displayName = 'CLASH';
                         }
-                    } else if (clientType === atob('c3VyZ2U=')) {
-                        schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
-                        displayName = 'SURGE';
-                    } else if (clientType === atob('c2luZ2JveA==')) {
-                        schemeUrl = 'sing-box://install-config?url=' + encodeURIComponent(finalUrl);
-                        displayName = 'SING-BOX';
-                    } else if (clientType === atob('bG9vbg==')) {
-                        schemeUrl = 'loon://install?url=' + encodeURIComponent(finalUrl);
-                        displayName = 'LOON';
-                    } else if (clientType === atob('cXVhbng=')) {
-                        schemeUrl = 'quantumult-x://install-config?url=' + encodeURIComponent(finalUrl);
-                        displayName = 'QUANTUMULT X';
-                    }
-                    
-                    if (schemeUrl) {
-                        tryOpenApp(schemeUrl, function() {
+                        
+                        if (schemeUrl) {
+                            tryOpenApp(schemeUrl, function() {
+                                navigator.clipboard.writeText(finalUrl).then(function() {
+                                        alert(displayName + " " + t.subscriptionCopied);
+                                });
+                            });
+                        } else {
                             navigator.clipboard.writeText(finalUrl).then(function() {
                                     alert(displayName + " " + t.subscriptionCopied);
                             });
-                        });
+                        }
                     } else {
-                        navigator.clipboard.writeText(finalUrl).then(function() {
-                                alert(displayName + " " + t.subscriptionCopied);
-                        });
+                        // 其他情况使用订阅转换服务
+                        var encodedUrl = encodeURIComponent(subscriptionUrl);
+                        finalUrl = SUB_CONVERTER_URL + "?target=" + clientType + "&url=" + encodedUrl + "&insert=false&config=" + encodeURIComponent(REMOTE_CONFIG_URL) + "&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true";
+                        var urlElement = document.getElementById("clientSubscriptionUrl");
+                        urlElement.textContent = finalUrl;
+                        urlElement.style.display = "block";
+                        urlElement.style.overflowWrap = "break-word";
+                        urlElement.style.wordBreak = "break-all";
+                        urlElement.style.overflowX = "auto";
+                        urlElement.style.maxWidth = "100%";
+                        urlElement.style.boxSizing = "border-box";
+                        
+                        if (clientType === atob('Y2xhc2g=')) {
+                            if (clientName === 'STASH') {
+                                schemeUrl = 'stash://install?url=' + encodeURIComponent(finalUrl);
+                                displayName = 'STASH';
+                            } else {
+                                schemeUrl = 'clash://install-config?url=' + encodeURIComponent(finalUrl);
+                                displayName = 'CLASH';
+                            }
+                        } else if (clientType === atob('c3VyZ2U=')) {
+                            schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
+                            displayName = 'SURGE';
+                        } else if (clientType === atob('c2luZ2JveA==')) {
+                            schemeUrl = 'sing-box://install-config?url=' + encodeURIComponent(finalUrl);
+                            displayName = 'SING-BOX';
+                        } else if (clientType === atob('bG9vbg==')) {
+                            schemeUrl = 'loon://install?url=' + encodeURIComponent(finalUrl);
+                            displayName = 'LOON';
+                        } else if (clientType === atob('cXVhbng=')) {
+                            schemeUrl = 'quantumult-x://install-config?url=' + encodeURIComponent(finalUrl);
+                            displayName = 'QUANTUMULT X';
+                        }
+                        
+                        if (schemeUrl) {
+                            tryOpenApp(schemeUrl, function() {
+                                navigator.clipboard.writeText(finalUrl).then(function() {
+                                        alert(displayName + " " + t.subscriptionCopied);
+                                });
+                            });
+                        } else {
+                            navigator.clipboard.writeText(finalUrl).then(function() {
+                                    alert(displayName + " " + t.subscriptionCopied);
+                            });
+                        }
                     }
                 }
             }
@@ -3378,6 +3896,7 @@
                     document.getElementById('ev').checked = config.ev !== 'no';
                     document.getElementById('et').checked = config.et === 'yes';
                     document.getElementById('ex').checked = config.ex === 'yes';
+                    document.getElementById('ech').checked = config.ech === 'yes';
                     document.getElementById('tp').value = config.tp || '';
                     document.getElementById('scu').value = config.scu || '';
                     document.getElementById('epd').checked = config.epd !== 'no';
@@ -3584,10 +4103,42 @@
                 }
             }
             
+            async function checkECHStatus() {
+                const echStatusEl = document.getElementById('echStatus');
+                
+                if (!echStatusEl) return;
+                
+                try {
+                    const currentUrl = window.location.href;
+                    const subscriptionUrl = currentUrl + '/sub';
+                    
+                    echStatusEl.innerHTML = 'ECH状态: <span style="color: #ffaa00;">检测中...</span>';
+                    
+                    const response = await fetch(subscriptionUrl, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'text/plain'
+                        }
+                    });
+                    
+                    const echStatusHeader = response.headers.get('X-ECH-Status');
+                    const echConfigLength = response.headers.get('X-ECH-Config-Length');
+                    
+                    if (echStatusHeader === 'ENABLED') {
+                        echStatusEl.innerHTML = 'ECH状态: <span style="color: #44ff44;">✅ 已启用' + (echConfigLength ? ' (配置长度: ' + echConfigLength + ')' : '') + '</span>';
+                    } else {
+                        echStatusEl.innerHTML = 'ECH状态: <span style="color: #ffaa00;">⚠️ 未启用</span>';
+                    }
+                } catch (error) {
+                    echStatusEl.innerHTML = 'ECH状态: <span style="color: #ff4444;">❌ 检测失败: ' + error.message + '</span>';
+                }
+            }
+            
             document.addEventListener('DOMContentLoaded', function() {
                 createMatrixRain();
                 checkSystemStatus();
                 checkKVStatus();
+                checkECHStatus();
                 
                 // 监听customIP输入框变化，实时更新wk地区选择状态
                 const customIPInput = document.getElementById('customIP');
@@ -3615,6 +4166,7 @@
                             ev: document.getElementById('ev').checked ? 'yes' : 'no', 
                             et: document.getElementById('et').checked ? 'yes' : 'no', 
                             ex: document.getElementById('ex').checked ? 'yes' : 'no', 
+                            ech: document.getElementById('ech').checked ? 'yes' : 'no',
                             tp: document.getElementById('tp').value
                         };
                         
@@ -3633,7 +4185,7 @@
                 if (otherConfigForm) {
                     otherConfigForm.addEventListener('submit', async function(e) {
                         e.preventDefault();
-                        const configData = { ev: document.getElementById('ev').checked ? 'yes' : 'no', et: document.getElementById('et').checked ? 'yes' : 'no', ex: document.getElementById('ex').checked ? 'yes' : 'no', tp: document.getElementById('tp').value,
+                        const configData = { ev: document.getElementById('ev').checked ? 'yes' : 'no', et: document.getElementById('et').checked ? 'yes' : 'no', ex: document.getElementById('ex').checked ? 'yes' : 'no', ech: document.getElementById('ech').checked ? 'yes' : 'no', tp: document.getElementById('tp').value,
                             d: document.getElementById('customPath').value,
                             p: document.getElementById('customIP').value,
                             yx: document.getElementById('yx').value,
@@ -3681,7 +4233,8 @@
                 const testStatus = document.getElementById('latencyTestStatus');
                 const testResultsDiv = document.getElementById('latencyTestResults');
                 const resultsList = document.getElementById('latencyResultsList');
-                const addSelectedBtn = document.getElementById('addSelectedToYx');
+                const overwriteSelectedBtn = document.getElementById('overwriteSelectedToYx');
+                const appendSelectedBtn = document.getElementById('appendSelectedToYx');
                 const selectAllBtn = document.getElementById('selectAllResults');
                 const deselectAllBtn = document.getElementById('deselectAllResults');
                 const ipSourceSelect = document.getElementById('ipSourceSelect');
@@ -3723,6 +4276,10 @@
                     randomIPCount.addEventListener('input', function() {
                         localStorage.setItem('randomIPCount', this.value);
                     });
+                    // 初始化时，如果默认是隐藏的，则禁用输入框
+                    if (randomCountDiv && randomCountDiv.style.display === 'none') {
+                        randomIPCount.disabled = true;
+                    }
                 }
                 const testThreadsInput = document.getElementById('testThreads');
                 if (testThreadsInput) {
@@ -3734,12 +4291,17 @@
                 }
                 if (ipSourceSelect) {
                     const savedSource = localStorage.getItem('ipSourceSelect');
+                    const currentSource = savedSource || ipSourceSelect.value || 'manual';
                     if (savedSource) {
                         ipSourceSelect.value = savedSource;
-                        manualInputDiv.style.display = savedSource === 'manual' ? 'block' : 'none';
-                        urlFetchDiv.style.display = savedSource === 'urlFetch' ? 'block' : 'none';
-                        cfRandomDiv.style.display = savedSource === 'cfRandom' ? 'block' : 'none';
-                        randomCountDiv.style.display = savedSource === 'cfRandom' ? 'block' : 'none';
+                    }
+                    manualInputDiv.style.display = currentSource === 'manual' ? 'block' : 'none';
+                    urlFetchDiv.style.display = currentSource === 'urlFetch' ? 'block' : 'none';
+                    cfRandomDiv.style.display = currentSource === 'cfRandom' ? 'block' : 'none';
+                    randomCountDiv.style.display = currentSource === 'cfRandom' ? 'block' : 'none';
+                    // 当隐藏时禁用输入框，避免表单验证错误
+                    if (randomIPCount) {
+                        randomIPCount.disabled = currentSource !== 'cfRandom';
                     }
                 }
                 
@@ -3780,6 +4342,10 @@
                         urlFetchDiv.style.display = value === 'urlFetch' ? 'block' : 'none';
                         cfRandomDiv.style.display = value === 'cfRandom' ? 'block' : 'none';
                         randomCountDiv.style.display = value === 'cfRandom' ? 'block' : 'none';
+                        // 当隐藏时禁用输入框，避免表单验证错误
+                        if (randomIPCount) {
+                            randomIPCount.disabled = value !== 'cfRandom';
+                        }
                     });
                 }
                 
@@ -3807,15 +4373,34 @@
                         fetchIPBtn.textContent = '${isFarsi ? 'در حال دریافت...' : '获取中...'}';
                         
                         try {
-                            const response = await fetch(fetchUrl);
-                            if (!response.ok) throw new Error('HTTP ' + response.status);
-                            const text = await response.text();
-                            const lines = text.trim().split('\\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+                            // 支持多个 URL（逗号分隔）以及返回内容中逗号分隔的多个 IP/节点
+                            const urlList = Array.from(new Set(
+                                fetchUrl.split(',').map(u => u.trim()).filter(u => u)
+                            ));
                             
-                            if (lines.length > 0) {
-                                document.getElementById('latencyTestInput').value = lines.join(',');
+                            const allItems = [];
+                            
+                            for (const u of urlList) {
+                                const response = await fetch(u);
+                                if (!response.ok) {
+                                    throw new Error('HTTP ' + response.status + ' @ ' + u);
+                                }
+                                const text = await response.text();
+                                
+                                // 先按行分割，再在每行内按逗号分割，兼容“多行 + 逗号分隔”两种格式
+                                const perUrlItems = text
+                                    .split(/\\r?\\n/)
+                                    .map(l => l.trim())
+                                    .filter(l => l && !l.startsWith('#'))
+                                    .flatMap(l => l.split(',').map(p => p.trim()).filter(p => p));
+                                
+                                allItems.push(...perUrlItems);
+                            }
+                            
+                            if (allItems.length > 0) {
+                                document.getElementById('latencyTestInput').value = allItems.join(',');
                                 manualInputDiv.style.display = 'block';
-                                showStatus('${isFarsi ? 'دریافت شد' : '已获取'} ' + lines.length + ' ${isFarsi ? 'IP' : '个IP'}', 'success');
+                                showStatus('${isFarsi ? 'دریافت شد' : '已获取'} ' + allItems.length + ' ${isFarsi ? 'IP' : '个IP'}', 'success');
                             } else {
                                 showStatus('${isFarsi ? 'داده‌ای یافت نشد' : '未获取到数据'}', 'error');
                             }
@@ -3851,6 +4436,9 @@
                         testResultsDiv.style.display = 'block';
                         resultsList.innerHTML = '';
                         testResults = [];
+                        if (cityFilterContainer) {
+                            cityFilterContainer.style.display = 'none';
+                        }
                         
                         testAbortController = new AbortController();
                         
@@ -3883,33 +4471,38 @@
                             return { host, port, nodeName };
                         }
                         
-                        function renderResult(result, index) {
+                        function renderResult(result, index, shouldShow = true) {
+                            // 只展示在线优选成功的结果，失败/超时的不再显示
+                            if (!result.success) {
+                                return null;
+                            }
+                            
                             const resultItem = document.createElement('div');
                             resultItem.style.cssText = 'display: flex; align-items: center; padding: 8px; border-bottom: 1px solid #003300; gap: 10px;';
+                            resultItem.dataset.index = index;
+                            resultItem.dataset.colo = result.colo || '';
+                            if (!shouldShow) {
+                                resultItem.style.display = 'none';
+                            }
                             
                             const checkbox = document.createElement('input');
                             checkbox.type = 'checkbox';
-                            checkbox.checked = result.success;
-                            checkbox.disabled = !result.success;
+                            checkbox.checked = true;
+                            checkbox.disabled = false;
                             checkbox.dataset.index = index;
                             checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer;';
                             
                             const info = document.createElement('div');
                             info.style.cssText = 'flex: 1; font-family: monospace; font-size: 13px;';
                             
-                            if (result.success) {
-                                const coloName = result.colo ? getColoName(result.colo) : '';
-                                const coloDisplay = coloName ? ' <span style="color: #00aaff;">[' + coloName + ']</span>' : '';
-                                info.innerHTML = '<span style="color: #00ff00;">' + result.host + ':' + result.port + '</span>' + coloDisplay + ' <span style="color: #ffff00;">' + result.latency + 'ms</span>';
-                            } else {
-                                const errorDetail = result.error || '${isFarsi ? 'زمان تمام شد' : '超时'}';
-                                const testUrlDisplay = result.testUrl ? '<br><span style="color: #888; font-size: 11px;">URL: ' + result.testUrl + '</span>' : '';
-                                info.innerHTML = '<span style="color: #ff4444;">' + result.host + ':' + result.port + '</span> <span style="color: #ff6666; font-size: 12px;">' + errorDetail + '</span>' + testUrlDisplay;
-                            }
+                            const coloName = result.colo ? getColoName(result.colo) : '';
+                            const coloDisplay = coloName ? ' <span style="color: #00aaff;">[' + coloName + ']</span>' : '';
+                            info.innerHTML = '<span style="color: #00ff00;">' + result.host + ':' + result.port + '</span>' + coloDisplay + ' <span style="color: #ffff00;">' + result.latency + 'ms</span>';
                             
                             resultItem.appendChild(checkbox);
                             resultItem.appendChild(info);
                             resultsList.appendChild(resultItem);
+                            return resultItem;
                         }
                         
                         async function testOne(target) {
@@ -3943,6 +4536,9 @@
                         testStatus.textContent = '${isFarsi ? 'تست کامل شد' : '测试完成'}: ' + completed + '/' + total;
                         startTestBtn.style.display = 'inline-block';
                         stopTestBtn.style.display = 'none';
+                        
+                        // 更新城市选择器
+                        updateCityFilter();
                     });
                 }
                 
@@ -3971,48 +4567,92 @@
                     });
                 }
                 
-                if (addSelectedBtn) {
-                    addSelectedBtn.addEventListener('click', async function() {
-                        const checkboxes = resultsList.querySelectorAll('input[type="checkbox"]:checked');
-                        if (checkboxes.length === 0) {
-                            showStatus('${isFarsi ? 'لطفا حداقل یک مورد انتخاب کنید' : '请至少选择一项'}', 'error');
-                            return;
+                // 获取选中项的通用函数
+                function getSelectedItems() {
+                    const checkboxes = resultsList.querySelectorAll('input[type="checkbox"]:checked');
+                    if (checkboxes.length === 0) {
+                        showStatus('${isFarsi ? 'لطفا حداقل یک مورد انتخاب کنید' : '请至少选择一项'}', 'error');
+                        return null;
+                    }
+                    
+                    const selectedItems = [];
+                    checkboxes.forEach(cb => {
+                        const idx = parseInt(cb.dataset.index);
+                        const result = testResults[idx];
+                        if (result && result.success) {
+                            const coloName = result.colo ? getColoName(result.colo) : result.nodeName;
+                            const itemStr = result.host + ':' + result.port + '#' + coloName;
+                            selectedItems.push(itemStr);
                         }
+                    });
+                    
+                    return selectedItems;
+                }
+                
+                // 覆盖添加
+                if (overwriteSelectedBtn) {
+                    overwriteSelectedBtn.addEventListener('click', async function() {
+                        const selectedItems = getSelectedItems();
+                        if (!selectedItems || selectedItems.length === 0) return;
                         
-                        const selectedItems = [];
-                        checkboxes.forEach(cb => {
-                            const idx = parseInt(cb.dataset.index);
-                            const result = testResults[idx];
-                            if (result && result.success) {
-                                const coloName = result.colo ? getColoName(result.colo) : result.nodeName;
-                                const itemStr = result.host + ':' + result.port + '#' + coloName;
-                                selectedItems.push(itemStr);
-                            }
-                        });
+                        const yxInput = document.getElementById('yx');
+                        const newValue = selectedItems.join(',');
+                        yxInput.value = newValue;
                         
-                        if (selectedItems.length > 0) {
-                            const yxInput = document.getElementById('yx');
-                            const newValue = selectedItems.join(',');
-                            yxInput.value = newValue;
-                            
-                            addSelectedBtn.disabled = true;
-                            addSelectedBtn.textContent = '${isFarsi ? 'در حال ذخیره...' : '保存中...'}';
-                            
-                            try {
-                                const configData = {
-                                    customIP: document.getElementById('customIP').value,
-                                    yx: newValue,
-                                    yxURL: document.getElementById('yxURL').value,
-                                    socksConfig: document.getElementById('socksConfig').value
-                                };
-                                await saveConfig(configData);
-                                showStatus('${isFarsi ? 'موفقیت‌آمیز بود' : '已替换'} ' + selectedItems.length + ' ${isFarsi ? 'مورد و ذخیره شد' : '项并已保存'}', 'success');
-                            } catch (err) {
-                                showStatus('${isFarsi ? 'خطا در ذخیره' : '保存失败'}: ' + err.message, 'error');
-                            } finally {
-                                addSelectedBtn.disabled = false;
-                                addSelectedBtn.textContent = '✓ ${isFarsi ? 'افزودن انتخاب‌شده‌ها به لیست ترجیحی' : '添加选中项到优选列表'}';
-                            }
+                        overwriteSelectedBtn.disabled = true;
+                        appendSelectedBtn.disabled = true;
+                        overwriteSelectedBtn.textContent = '${isFarsi ? 'در حال ذخیره...' : '保存中...'}';
+                        
+                        try {
+                            const configData = {
+                                customIP: document.getElementById('customIP').value,
+                                yx: newValue,
+                                yxURL: document.getElementById('yxURL').value,
+                                socksConfig: document.getElementById('socksConfig').value
+                            };
+                            await saveConfig(configData);
+                            showStatus('${isFarsi ? 'موفقیت‌آمیز بود' : '已覆盖'} ' + selectedItems.length + ' ${isFarsi ? 'مورد و ذخیره شد' : '项并已保存'}', 'success');
+                        } catch (err) {
+                            showStatus('${isFarsi ? 'خطا در ذخیره' : '保存失败'}: ' + err.message, 'error');
+                        } finally {
+                            overwriteSelectedBtn.disabled = false;
+                            appendSelectedBtn.disabled = false;
+                            overwriteSelectedBtn.textContent = '${isFarsi ? '覆盖添加' : '覆盖添加'}';
+                        }
+                    });
+                }
+                
+                // 追加添加
+                if (appendSelectedBtn) {
+                    appendSelectedBtn.addEventListener('click', async function() {
+                        const selectedItems = getSelectedItems();
+                        if (!selectedItems || selectedItems.length === 0) return;
+                        
+                        const yxInput = document.getElementById('yx');
+                        const currentValue = yxInput.value.trim();
+                        const newItems = selectedItems.join(',');
+                        const newValue = currentValue ? (currentValue + ',' + newItems) : newItems;
+                        yxInput.value = newValue;
+                        
+                        overwriteSelectedBtn.disabled = true;
+                        appendSelectedBtn.disabled = true;
+                        appendSelectedBtn.textContent = '${isFarsi ? 'در حال ذخیره...' : '保存中...'}';
+                        
+                        try {
+                            const configData = {
+                                customIP: document.getElementById('customIP').value,
+                                yx: newValue,
+                                yxURL: document.getElementById('yxURL').value,
+                                socksConfig: document.getElementById('socksConfig').value
+                            };
+                            await saveConfig(configData);
+                            showStatus('${isFarsi ? 'موفقیت‌آمیز بود' : '已追加'} ' + selectedItems.length + ' ${isFarsi ? 'مورد و ذخیره شد' : '项并已保存'}', 'success');
+                        } catch (err) {
+                            showStatus('${isFarsi ? 'خطا در ذخیره' : '保存失败'}: ' + err.message, 'error');
+                        } finally {
+                            overwriteSelectedBtn.disabled = false;
+                            appendSelectedBtn.disabled = false;
+                            appendSelectedBtn.textContent = '${isFarsi ? '追加添加' : '追加添加'}';
                         }
                     });
                 }
@@ -4030,64 +4670,194 @@
                 }
                 
                 const coloMap = {
-                    'SJC': '圣何塞', 'LAX': '洛杉矶', 'SEA': '西雅图', 'SFO': '旧金山', 'DFW': '达拉斯',
-                    'ORD': '芝加哥', 'IAD': '华盛顿', 'ATL': '亚特兰大', 'MIA': '迈阿密', 'DEN': '丹佛',
-                    'PHX': '凤凰城', 'BOS': '波士顿', 'EWR': '纽瓦克', 'JFK': '纽约', 'LAS': '拉斯维加斯',
-                    'MSP': '明尼阿波利斯', 'DTW': '底特律', 'PHL': '费城', 'CLT': '夏洛特', 'SLC': '盐湖城',
-                    'PDX': '波特兰', 'SAN': '圣地亚哥', 'TPA': '坦帕', 'IAH': '休斯顿', 'MCO': '奥兰多',
-                    'AUS': '奥斯汀', 'BNA': '纳什维尔', 'RDU': '罗利', 'IND': '印第安纳波利斯', 'CMH': '哥伦布',
-                    'MCI': '堪萨斯城', 'OMA': '奥马哈', 'ABQ': '阿尔伯克基', 'OKC': '俄克拉荷马城', 'MEM': '孟菲斯',
-                    'JAX': '杰克逊维尔', 'RIC': '里士满', 'BUF': '布法罗', 'PIT': '匹兹堡', 'CLE': '克利夫兰',
-                    'CVG': '辛辛那提', 'MKE': '密尔沃基', 'STL': '圣路易斯', 'SAT': '圣安东尼奥', 'HNL': '檀香山',
-                    'ANC': '安克雷奇', 'SMF': '萨克拉门托', 'ONT': '安大略', 'OAK': '奥克兰',
-                    'HKG': '香港', 'TPE': '台北', 'TSA': '台北松山', 'KHH': '高雄',
-                    'NRT': '东京成田', 'HND': '东京羽田', 'KIX': '大阪关西', 'ITM': '大阪伊丹', 'NGO': '名古屋',
-                    'FUK': '福冈', 'CTS': '札幌', 'OKA': '冲绳',
-                    'ICN': '首尔仁川', 'GMP': '首尔金浦', 'PUS': '釜山',
-                    'SIN': '新加坡', 'BKK': '曼谷', 'DMK': '曼谷廊曼', 'KUL': '吉隆坡', 'CGK': '雅加达',
-                    'MNL': '马尼拉', 'CEB': '宿务', 'HAN': '河内', 'SGN': '胡志明', 'DAD': '岘港',
-                    'RGN': '仰光', 'PNH': '金边', 'REP': '暹粒', 'VTE': '万象',
-                    'BOM': '孟买', 'DEL': '新德里', 'MAA': '金奈', 'BLR': '班加罗尔', 'CCU': '加尔各答',
-                    'HYD': '海得拉巴', 'AMD': '艾哈迈达巴德', 'COK': '科钦', 'PNQ': '浦那', 'GOI': '果阿',
-                    'CMB': '科伦坡', 'DAC': '达卡', 'KTM': '加德满都', 'ISB': '伊斯兰堡', 'KHI': '卡拉奇', 'LHE': '拉合尔',
-                    'LHR': '伦敦希思罗', 'LGW': '伦敦盖特威克', 'STN': '伦敦斯坦斯特德', 'LTN': '伦敦卢顿', 'MAN': '曼彻斯特', 'EDI': '爱丁堡', 'BHX': '伯明翰',
-                    'CDG': '巴黎戴高乐', 'ORY': '巴黎奥利', 'MRS': '马赛', 'LYS': '里昂', 'NCE': '尼斯',
-                    'FRA': '法兰克福', 'MUC': '慕尼黑', 'TXL': '柏林', 'BER': '柏林勃兰登堡', 'HAM': '汉堡', 'DUS': '杜塞尔多夫', 'CGN': '科隆', 'STR': '斯图加特',
-                    'AMS': '阿姆斯特丹', 'BRU': '布鲁塞尔', 'LUX': '卢森堡',
-                    'ZRH': '苏黎世', 'GVA': '日内瓦', 'BSL': '巴塞尔',
-                    'VIE': '维也纳', 'PRG': '布拉格', 'BUD': '布达佩斯', 'WAW': '华沙', 'KRK': '克拉科夫',
-                    'MXP': '米兰马尔彭萨', 'LIN': '米兰利纳特', 'FCO': '罗马', 'VCE': '威尼斯', 'NAP': '那不勒斯', 'FLR': '佛罗伦萨', 'BGY': '贝加莫',
-                    'MAD': '马德里', 'BCN': '巴塞罗那', 'PMI': '帕尔马', 'AGP': '马拉加', 'VLC': '瓦伦西亚', 'SVQ': '塞维利亚', 'BIO': '毕尔巴鄂',
-                    'LIS': '里斯本', 'OPO': '波尔图', 'FAO': '法鲁',
-                    'DUB': '都柏林', 'CPH': '哥本哈根', 'ARN': '斯德哥尔摩', 'GOT': '哥德堡',
-                    'OSL': '奥斯陆', 'BGO': '卑尔根', 'HEL': '赫尔辛基', 'RIX': '里加', 'TLL': '塔林', 'VNO': '维尔纽斯',
-                    'ATH': '雅典', 'SKG': '塞萨洛尼基', 'SOF': '索非亚', 'OTP': '布加勒斯特', 'BEG': '贝尔格莱德', 'ZAG': '萨格勒布', 'LJU': '卢布尔雅那',
-                    'KBP': '基辅', 'IEV': '基辅茹良尼', 'ODS': '敖德萨',
-                    'SVO': '莫斯科谢列梅捷沃', 'DME': '莫斯科多莫杰多沃', 'VKO': '莫斯科伏努科沃', 'LED': '圣彼得堡',
-                    'IST': '伊斯坦布尔', 'SAW': '伊斯坦布尔萨比哈', 'ESB': '安卡拉', 'AYT': '安塔利亚', 'ADB': '伊兹密尔',
-                    'TLV': '特拉维夫', 'AMM': '安曼', 'BEY': '贝鲁特', 'BAH': '巴林', 'KWI': '科威特',
-                    'DXB': '迪拜', 'AUH': '阿布扎比', 'SHJ': '沙迦', 'DOH': '多哈', 'MCT': '马斯喀特',
-                    'RUH': '利雅得', 'JED': '吉达', 'DMM': '达曼',
-                    'CAI': '开罗', 'HBE': '亚历山大', 'SSH': '沙姆沙伊赫',
-                    'CMN': '卡萨布兰卡', 'RAK': '马拉喀什', 'TUN': '突尼斯', 'ALG': '阿尔及尔',
-                    'LOS': '拉各斯', 'ABV': '阿布贾', 'ACC': '阿克拉', 'NBO': '内罗毕', 'MBA': '蒙巴萨', 'ADD': '亚的斯亚贝巴', 'DAR': '达累斯萨拉姆',
-                    'JNB': '约翰内斯堡', 'CPT': '开普敦', 'DUR': '德班', 'HRE': '哈拉雷', 'LUN': '卢萨卡',
-                    'MRU': '毛里求斯', 'SEZ': '塞舌尔',
-                    'SYD': '悉尼', 'MEL': '墨尔本', 'BNE': '布里斯班', 'PER': '珀斯', 'ADL': '阿德莱德', 'CBR': '堪培拉', 'OOL': '黄金海岸', 'CNS': '凯恩斯',
-                    'AKL': '奥克兰', 'WLG': '惠灵顿', 'CHC': '基督城', 'ZQN': '皇后镇',
-                    'NAN': '楠迪', 'PPT': '帕皮提', 'GUM': '关岛',
-                    'GRU': '圣保罗瓜鲁柳斯', 'CGH': '圣保罗孔戈尼亚斯', 'GIG': '里约热内卢', 'BSB': '巴西利亚', 'CNF': '贝洛奥里藏特', 'POA': '阿雷格里港', 'CWB': '库里蒂巴', 'FOR': '福塔莱萨', 'REC': '累西腓', 'SSA': '萨尔瓦多',
-                    'EZE': '布宜诺斯艾利斯', 'AEP': '布宜诺斯艾利斯城', 'COR': '科尔多瓦', 'MDZ': '门多萨',
-                    'SCL': '圣地亚哥', 'LIM': '利马', 'BOG': '波哥大', 'MDE': '麦德林', 'CLO': '卡利',
-                    'UIO': '基多', 'GYE': '瓜亚基尔', 'CCS': '加拉加斯', 'MVD': '蒙得维的亚', 'ASU': '亚松森',
-                    'PTY': '巴拿马城', 'SJO': '圣何塞', 'GUA': '危地马拉城', 'SAL': '圣萨尔瓦多', 'TGU': '特古西加尔巴', 'MGA': '马那瓜', 'BZE': '伯利兹城',
-                    'MEX': '墨西哥城', 'GDL': '瓜达拉哈拉', 'MTY': '蒙特雷', 'CUN': '坎昆', 'TIJ': '蒂华纳', 'SJD': '圣何塞德尔卡沃',
-                    'YYZ': '多伦多', 'YVR': '温哥华', 'YUL': '蒙特利尔', 'YYC': '卡尔加里', 'YEG': '埃德蒙顿', 'YOW': '渥太华', 'YWG': '温尼伯', 'YHZ': '哈利法克斯',
-                    'HAV': '哈瓦那', 'SJU': '圣胡安', 'SDQ': '圣多明各', 'PAP': '太子港', 'KIN': '金斯顿', 'NAS': '拿骚', 'MBJ': '蒙特哥贝'
+                    'SJC': '🇺🇸 圣何塞', 'LAX': '🇺🇸 洛杉矶', 'SEA': '🇺🇸 西雅图', 'SFO': '🇺🇸 旧金山', 'DFW': '🇺🇸 达拉斯',
+                    'ORD': '🇺🇸 芝加哥', 'IAD': '🇺🇸 华盛顿', 'ATL': '🇺🇸 亚特兰大', 'MIA': '🇺🇸 迈阿密', 'DEN': '🇺🇸 丹佛',
+                    'PHX': '🇺🇸 凤凰城', 'BOS': '🇺🇸 波士顿', 'EWR': '🇺🇸 纽瓦克', 'JFK': '🇺🇸 纽约', 'LAS': '🇺🇸 拉斯维加斯',
+                    'MSP': '🇺🇸 明尼阿波利斯', 'DTW': '🇺🇸 底特律', 'PHL': '🇺🇸 费城', 'CLT': '🇺🇸 夏洛特', 'SLC': '🇺🇸 盐湖城',
+                    'PDX': '🇺🇸 波特兰', 'SAN': '🇺🇸 圣地亚哥', 'TPA': '🇺🇸 坦帕', 'IAH': '🇺🇸 休斯顿', 'MCO': '🇺🇸 奥兰多',
+                    'AUS': '🇺🇸 奥斯汀', 'BNA': '🇺🇸 纳什维尔', 'RDU': '🇺🇸 罗利', 'IND': '🇺🇸 印第安纳波利斯', 'CMH': '🇺🇸 哥伦布',
+                    'MCI': '🇺🇸 堪萨斯城', 'OMA': '🇺🇸 奥马哈', 'ABQ': '🇺🇸 阿尔伯克基', 'OKC': '🇺🇸 俄克拉荷马城', 'MEM': '🇺🇸 孟菲斯',
+                    'JAX': '🇺🇸 杰克逊维尔', 'RIC': '🇺🇸 里士满', 'BUF': '🇺🇸 布法罗', 'PIT': '🇺🇸 匹兹堡', 'CLE': '🇺🇸 克利夫兰',
+                    'CVG': '🇺🇸 辛辛那提', 'MKE': '🇺🇸 密尔沃基', 'STL': '🇺🇸 圣路易斯', 'SAT': '🇺🇸 圣安东尼奥', 'HNL': '🇺🇸 檀香山',
+                    'ANC': '🇺🇸 安克雷奇', 'SMF': '🇺🇸 萨克拉门托', 'ONT': '🇺🇸 安大略', 'OAK': '🇺🇸 奥克兰',
+                    'HKG': '🇭🇰 香港', 'TPE': '🇹🇼 台北', 'TSA': '🇹🇼 台北松山', 'KHH': '🇹🇼 高雄',
+                    'NRT': '🇯🇵 东京成田', 'HND': '🇯🇵 东京羽田', 'KIX': '🇯🇵 大阪关西', 'ITM': '🇯🇵 大阪伊丹', 'NGO': '🇯🇵 名古屋',
+                    'FUK': '🇯🇵 福冈', 'CTS': '🇯🇵 札幌', 'OKA': '🇯🇵 冲绳',
+                    'ICN': '🇰🇷 首尔仁川', 'GMP': '🇰🇷 首尔金浦', 'PUS': '🇰🇷 釜山',
+                    'SIN': '🇸🇬 新加坡', 'BKK': '🇹🇭 曼谷', 'DMK': '🇹🇭 曼谷廊曼', 'KUL': '🇲🇾 吉隆坡', 'CGK': '🇮🇩 雅加达',
+                    'MNL': '🇵🇭 马尼拉', 'CEB': '🇵🇭 宿务', 'HAN': '🇻🇳 河内', 'SGN': '🇻🇳 胡志明', 'DAD': '🇻🇳 岘港',
+                    'RGN': '🇲🇲 仰光', 'PNH': '🇰🇭 金边', 'REP': '🇰🇭 暹粒', 'VTE': '🇱🇦 万象',
+                    'BOM': '🇮🇳 孟买', 'DEL': '🇮🇳 新德里', 'MAA': '🇮🇳 金奈', 'BLR': '🇮🇳 班加罗尔', 'CCU': '🇮🇳 加尔各答',
+                    'HYD': '🇮🇳 海得拉巴', 'AMD': '🇮🇳 艾哈迈达巴德', 'COK': '🇮🇳 科钦', 'PNQ': '🇮🇳 浦那', 'GOI': '🇮🇳 果阿',
+                    'CMB': '🇱🇰 科伦坡', 'DAC': '🇧🇩 达卡', 'KTM': '🇳🇵 加德满都', 'ISB': '🇵🇰 伊斯兰堡', 'KHI': '🇵🇰 卡拉奇', 'LHE': '🇵🇰 拉合尔',
+                    'LHR': '🇬🇧 伦敦希思罗', 'LGW': '🇬🇧 伦敦盖特威克', 'STN': '🇬🇧 伦敦斯坦斯特德', 'LTN': '🇬🇧 伦敦卢顿', 'MAN': '🇬🇧 曼彻斯特', 'EDI': '🇬🇧 爱丁堡', 'BHX': '🇬🇧 伯明翰',
+                    'CDG': '🇫🇷 巴黎戴高乐', 'ORY': '🇫🇷 巴黎奥利', 'MRS': '🇫🇷 马赛', 'LYS': '🇫🇷 里昂', 'NCE': '🇫🇷 尼斯',
+                    'FRA': '🇩🇪 法兰克福', 'MUC': '🇩🇪 慕尼黑', 'TXL': '🇩🇪 柏林', 'BER': '🇩🇪 柏林勃兰登堡', 'HAM': '🇩🇪 汉堡', 'DUS': '🇩🇪 杜塞尔多夫', 'CGN': '🇩🇪 科隆', 'STR': '🇩🇪 斯图加特',
+                    'AMS': '🇳🇱 阿姆斯特丹', 'BRU': '🇧🇪 布鲁塞尔', 'LUX': '🇱🇺 卢森堡',
+                    'ZRH': '🇨🇭 苏黎世', 'GVA': '🇨🇭 日内瓦', 'BSL': '🇨🇭 巴塞尔',
+                    'VIE': '🇦🇹 维也纳', 'PRG': '🇨🇿 布拉格', 'BUD': '🇭🇺 布达佩斯', 'WAW': '🇵🇱 华沙', 'KRK': '🇵🇱 克拉科夫',
+                    'MXP': '🇮🇹 米兰马尔彭萨', 'LIN': '🇮🇹 米兰利纳特', 'FCO': '🇮🇹 罗马', 'VCE': '🇮🇹 威尼斯', 'NAP': '🇮🇹 那不勒斯', 'FLR': '🇮🇹 佛罗伦萨', 'BGY': '🇮🇹 贝加莫',
+                    'MAD': '🇪🇸 马德里', 'BCN': '🇪🇸 巴塞罗那', 'PMI': '🇪🇸 帕尔马', 'AGP': '🇪🇸 马拉加', 'VLC': '🇪🇸 瓦伦西亚', 'SVQ': '🇪🇸 塞维利亚', 'BIO': '🇪🇸 毕尔巴鄂',
+                    'LIS': '🇵🇹 里斯本', 'OPO': '🇵🇹 波尔图', 'FAO': '🇵🇹 法鲁',
+                    'DUB': '🇮🇪 都柏林', 'CPH': '🇩🇰 哥本哈根', 'ARN': '🇸🇪 斯德哥尔摩', 'GOT': '🇸🇪 哥德堡',
+                    'OSL': '🇳🇴 奥斯陆', 'BGO': '🇳🇴 卑尔根', 'HEL': '🇫🇮 赫尔辛基', 'RIX': '🇱🇻 里加', 'TLL': '🇪🇪 塔林', 'VNO': '🇱🇹 维尔纽斯',
+                    'ATH': '🇬🇷 雅典', 'SKG': '🇬🇷 塞萨洛尼基', 'SOF': '🇧🇬 索非亚', 'OTP': '🇷🇴 布加勒斯特', 'BEG': '🇷🇸 贝尔格莱德', 'ZAG': '🇭🇷 萨格勒布', 'LJU': '🇸🇮 卢布尔雅那',
+                    'KBP': '🇺🇦 基辅', 'IEV': '🇺🇦 基辅茹良尼', 'ODS': '🇺🇦 敖德萨',
+                    'SVO': '🇷🇺 莫斯科谢列梅捷沃', 'DME': '🇷🇺 莫斯科多莫杰多沃', 'VKO': '🇷🇺 莫斯科伏努科沃', 'LED': '🇷🇺 圣彼得堡',
+                    'IST': '🇹🇷 伊斯坦布尔', 'SAW': '🇹🇷 伊斯坦布尔萨比哈', 'ESB': '🇹🇷 安卡拉', 'AYT': '🇹🇷 安塔利亚', 'ADB': '🇹🇷 伊兹密尔',
+                    'TLV': '🇮🇱 特拉维夫', 'AMM': '🇯🇴 安曼', 'BEY': '🇱🇧 贝鲁特', 'BAH': '🇧🇭 巴林', 'KWI': '🇰🇼 科威特',
+                    'DXB': '🇦🇪 迪拜', 'AUH': '🇦🇪 阿布扎比', 'SHJ': '🇦🇪 沙迦', 'DOH': '🇶🇦 多哈', 'MCT': '🇴🇲 马斯喀特',
+                    'RUH': '🇸🇦 利雅得', 'JED': '🇸🇦 吉达', 'DMM': '🇸🇦 达曼',
+                    'CAI': '🇪🇬 开罗', 'HBE': '🇪🇬 亚历山大', 'SSH': '🇪🇬 沙姆沙伊赫',
+                    'CMN': '🇲🇦 卡萨布兰卡', 'RAK': '🇲🇦 马拉喀什', 'TUN': '🇹🇳 突尼斯', 'ALG': '🇩🇿 阿尔及尔',
+                    'LOS': '🇳🇬 拉各斯', 'ABV': '🇳🇬 阿布贾', 'ACC': '🇬🇭 阿克拉', 'NBO': '🇰🇪 内罗毕', 'MBA': '🇰🇪 蒙巴萨', 'ADD': '🇪🇹 亚的斯亚贝巴', 'DAR': '🇹🇿 达累斯萨拉姆',
+                    'JNB': '🇿🇦 约翰内斯堡', 'CPT': '🇿🇦 开普敦', 'DUR': '🇿🇦 德班', 'HRE': '🇿🇼 哈拉雷', 'LUN': '🇿🇲 卢萨卡',
+                    'MRU': '🇲🇺 毛里求斯', 'SEZ': '🇸🇨 塞舌尔',
+                    'SYD': '🇦🇺 悉尼', 'MEL': '🇦🇺 墨尔本', 'BNE': '🇦🇺 布里斯班', 'PER': '🇦🇺 珀斯', 'ADL': '🇦🇺 阿德莱德', 'CBR': '🇦🇺 堪培拉', 'OOL': '🇦🇺 黄金海岸', 'CNS': '🇦🇺 凯恩斯',
+                    'AKL': '🇳🇿 奥克兰', 'WLG': '🇳🇿 惠灵顿', 'CHC': '🇳🇿 基督城', 'ZQN': '🇳🇿 皇后镇',
+                    'NAN': '🇫🇯 楠迪', 'PPT': '🇵🇫 帕皮提', 'GUM': '🇬🇺 关岛',
+                    'GRU': '🇧🇷 圣保罗瓜鲁柳斯', 'CGH': '🇧🇷 圣保罗孔戈尼亚斯', 'GIG': '🇧🇷 里约热内卢', 'BSB': '🇧🇷 巴西利亚', 'CNF': '🇧🇷 贝洛奥里藏特', 'POA': '🇧🇷 阿雷格里港', 'CWB': '🇧🇷 库里蒂巴', 'FOR': '🇧🇷 福塔莱萨', 'REC': '🇧🇷 累西腓', 'SSA': '🇧🇷 萨尔瓦多',
+                    'EZE': '🇦🇷 布宜诺斯艾利斯', 'AEP': '🇦🇷 布宜诺斯艾利斯城', 'COR': '🇦🇷 科尔多瓦', 'MDZ': '🇦🇷 门多萨',
+                    'SCL': '🇨🇱 圣地亚哥', 'LIM': '🇵🇪 利马', 'BOG': '🇨🇴 波哥大', 'MDE': '🇨🇴 麦德林', 'CLO': '🇨🇴 卡利',
+                    'UIO': '🇪🇨 基多', 'GYE': '🇪🇨 瓜亚基尔', 'CCS': '🇻🇪 加拉加斯', 'MVD': '🇺🇾 蒙得维的亚', 'ASU': '🇵🇾 亚松森',
+                    'PTY': '🇵🇦 巴拿马城', 'SJO': '🇨🇷 圣何塞', 'GUA': '🇬🇹 危地马拉城', 'SAL': '🇸🇻 圣萨尔瓦多', 'TGU': '🇭🇳 特古西加尔巴', 'MGA': '🇳🇮 马那瓜', 'BZE': '🇧🇿 伯利兹城',
+                    'MEX': '🇲🇽 墨西哥城', 'GDL': '🇲🇽 瓜达拉哈拉', 'MTY': '🇲🇽 蒙特雷', 'CUN': '🇲🇽 坎昆', 'TIJ': '🇲🇽 蒂华纳', 'SJD': '🇲🇽 圣何塞德尔卡沃',
+                    'YYZ': '🇨🇦 多伦多', 'YVR': '🇨🇦 温哥华', 'YUL': '🇨🇦 蒙特利尔', 'YYC': '🇨🇦 卡尔加里', 'YEG': '🇨🇦 埃德蒙顿', 'YOW': '🇨🇦 渥太华', 'YWG': '🇨🇦 温尼伯', 'YHZ': '🇨🇦 哈利法克斯',
+                    'HAV': '🇨🇺 哈瓦那', 'SJU': '🇵🇷 圣胡安', 'SDQ': '🇩🇴 圣多明各', 'PAP': '🇭🇹 太子港', 'KIN': '🇯🇲 金斯顿', 'NAS': '🇧🇸 拿骚', 'MBJ': '🇯🇲 蒙特哥贝'
                 };
                 
                 function getColoName(colo) {
                     return coloMap[colo] || colo;
+                }
+                
+                // 城市筛选相关函数
+                const cityFilterContainer = document.getElementById('cityFilterContainer');
+                const cityCheckboxesContainer = document.getElementById('cityCheckboxesContainer');
+                
+                function updateCityFilter() {
+                    if (!cityFilterContainer || !cityCheckboxesContainer) return;
+                    
+                    // 从测试结果中提取所有可用的城市
+                    const cityMap = new Map();
+                    testResults.forEach((result, index) => {
+                        if (result.success && result.colo) {
+                            const colo = result.colo;
+                            if (!cityMap.has(colo)) {
+                                cityMap.set(colo, {
+                                    colo: colo,
+                                    name: getColoName(colo),
+                                    count: 0
+                                });
+                            }
+                            cityMap.get(colo).count++;
+                        }
+                    });
+                    
+                    if (cityMap.size === 0) {
+                        cityFilterContainer.style.display = 'none';
+                        return;
+                    }
+                    
+                    cityFilterContainer.style.display = 'block';
+                    cityCheckboxesContainer.innerHTML = '';
+                    
+                    // 按城市名称排序
+                    const cities = Array.from(cityMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+                    
+                    cities.forEach(city => {
+                        const label = document.createElement('label');
+                        label.style.cssText = 'display: inline-flex; align-items: center; cursor: pointer; color: #00ff00; font-size: 0.85rem; padding: 4px 8px; background: rgba(0, 40, 0, 0.4); border: 1px solid #00aa00; border-radius: 4px;';
+                        
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.value = city.colo;
+                        checkbox.checked = true;
+                        checkbox.dataset.colo = city.colo;
+                        checkbox.style.cssText = 'margin-right: 6px; width: 16px; height: 16px; cursor: pointer;';
+                        
+                        const span = document.createElement('span');
+                        span.textContent = city.name + ' (' + city.count + ')';
+                        
+                        label.appendChild(checkbox);
+                        label.appendChild(span);
+                        cityCheckboxesContainer.appendChild(label);
+                        
+                        checkbox.addEventListener('change', filterResultsByCity);
+                    });
+                    
+                    // 监听筛选模式变化
+                    const filterModeRadios = document.querySelectorAll('input[name="cityFilterMode"]');
+                    filterModeRadios.forEach(radio => {
+                        radio.addEventListener('change', function() {
+                            if (this.value === 'all') {
+                                // 切换到"全部城市"模式时，自动选中所有城市复选框
+                                const cityCheckboxes = cityCheckboxesContainer.querySelectorAll('input[type="checkbox"]');
+                                cityCheckboxes.forEach(cb => {
+                                    cb.checked = true;
+                                    cb.disabled = false;
+                                });
+                            }
+                            filterResultsByCity();
+                        });
+                    });
+                }
+                
+                function filterResultsByCity() {
+                    if (!resultsList || !cityCheckboxesContainer) return;
+                    
+                    const filterMode = document.querySelector('input[name="cityFilterMode"]:checked')?.value || 'all';
+                    const resultItems = resultsList.querySelectorAll('[data-index]');
+                    const cityCheckboxes = cityCheckboxesContainer.querySelectorAll('input[type="checkbox"]');
+                    
+                    if (filterMode === 'fastest10') {
+                        // 只选择最快的10个
+                        const sortedResults = testResults
+                            .map((result, index) => ({ result, index }))
+                            .filter(item => item.result.success)
+                            .sort((a, b) => a.result.latency - b.result.latency)
+                            .slice(0, 10);
+                        
+                        const fastestIndices = new Set(sortedResults.map(item => item.index));
+                        
+                        resultItems.forEach(item => {
+                            const index = parseInt(item.dataset.index);
+                            const checkbox = item.querySelector('input[type="checkbox"]');
+                            if (fastestIndices.has(index)) {
+                                item.style.display = 'flex';
+                                if (checkbox) checkbox.checked = true;
+                            } else {
+                                item.style.display = 'none';
+                                if (checkbox) checkbox.checked = false;
+                            }
+                        });
+                        
+                        // 禁用城市复选框
+                        cityCheckboxes.forEach(cb => cb.disabled = true);
+                    } else {
+                        // 根据选中的城市筛选
+                        const selectedCities = new Set();
+                        cityCheckboxes.forEach(cb => {
+                            if (cb.checked) {
+                                selectedCities.add(cb.value);
+                            }
+                        });
+                        
+                        // 如果所有城市都被选中（或没有选中任何城市），显示所有结果
+                        const allChecked = cityCheckboxes.length > 0 && selectedCities.size === cityCheckboxes.length;
+                        const noneChecked = selectedCities.size === 0;
+                        
+                        resultItems.forEach(item => {
+                            const colo = item.dataset.colo || '';
+                            if (allChecked || noneChecked || selectedCities.has(colo)) {
+                                item.style.display = 'flex';
+                            } else {
+                                item.style.display = 'none';
+                            }
+                        });
+                        
+                        // 启用城市复选框
+                        cityCheckboxes.forEach(cb => cb.disabled = false);
+                    }
                 }
                 
                 async function testLatency(host, port, signal) {
@@ -4833,7 +5603,7 @@
         }
     }
 
-    function generateLinksFromNewIPs(list, user, workerDomain) {
+    function generateLinksFromNewIPs(list, user, workerDomain, echConfig = null) {
         
         const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
         const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -4849,7 +5619,14 @@
             if (CF_HTTPS_PORTS.includes(port)) {
                 
                 const wsNodeName = `${nodeName}-${port}-WS-TLS`;
-                const link = `${proto}://${user}@${item.ip}:${port}?encryption=none&security=tls&sni=${workerDomain}&fp=chrome&type=ws&host=${workerDomain}&path=${wsPath}#${encodeURIComponent(wsNodeName)}`;
+                let link = `${proto}://${user}@${item.ip}:${port}?encryption=none&security=tls&sni=${workerDomain}&fp=${enableECH ? 'chrome' : 'randomized'}&type=ws&host=${workerDomain}&path=${wsPath}`;
+                
+                // 如果启用了ECH，添加ech参数（ECH需要伪装成Chrome浏览器）
+                if (enableECH) {
+                    link += `&alpn=h3%2Ch2%2Chttp%2F1.1&ech=${encodeURIComponent('cloudflare-ech.com+https://dns.alidns.com/dns-query')}`;
+                }
+                
+                link += `#${encodeURIComponent(wsNodeName)}`;
                 links.push(link);
             } else if (CF_HTTP_PORTS.includes(port)) {
                 
@@ -4861,14 +5638,21 @@
             } else {
                 
                 const wsNodeName = `${nodeName}-${port}-WS-TLS`;
-                const link = `${proto}://${user}@${item.ip}:${port}?encryption=none&security=tls&sni=${workerDomain}&fp=chrome&type=ws&host=${workerDomain}&path=${wsPath}#${encodeURIComponent(wsNodeName)}`;
+                let link = `${proto}://${user}@${item.ip}:${port}?encryption=none&security=tls&sni=${workerDomain}&fp=${enableECH ? 'chrome' : 'randomized'}&type=ws&host=${workerDomain}&path=${wsPath}`;
+                
+                // 如果启用了ECH，添加ech参数（ECH需要伪装成Chrome浏览器）
+                if (enableECH) {
+                    link += `&alpn=h3%2Ch2%2Chttp%2F1.1&ech=${encodeURIComponent('cloudflare-ech.com+https://dns.alidns.com/dns-query')}`;
+                }
+                
+                link += `#${encodeURIComponent(wsNodeName)}`;
                 links.push(link);
             }
         });
         return links;
     }
 
-    function generateXhttpLinksFromSource(list, user, workerDomain) {
+    function generateXhttpLinksFromSource(list, user, workerDomain, echConfig = null) {
         const links = [];
         const nodePath = user.substring(0, 8);
         
@@ -4886,12 +5670,17 @@
                 security: 'tls',
                 sni: workerDomain,
                 fp: 'chrome',
-                allowInsecure: '1',
                 type: 'xhttp',
                 host: workerDomain,
                 path: `/${nodePath}`,
                 mode: 'stream-one'
             });
+            
+            // 如果启用了ECH，添加ech参数（ECH需要伪装成Chrome浏览器）
+            if (enableECH) {
+                params.set('alpn', 'h3,h2,http/1.1');
+                params.set('ech', `cloudflare-ech.com+https://dns.alidns.com/dns-query`);
+            }
             
             links.push(`vless://${user}@${safeIP}:${port}?${params.toString()}#${encodeURIComponent(wsNodeName)}`);
         });
@@ -4899,7 +5688,7 @@
         return links;
     }
 
-    async function generateTrojanLinksFromNewIPs(list, user, workerDomain) {
+    async function generateTrojanLinksFromNewIPs(list, user, workerDomain, echConfig = null) {
         
         const CF_HTTP_PORTS = [80, 8080, 8880, 2052, 2082, 2086, 2095];
         const CF_HTTPS_PORTS = [443, 2053, 2083, 2087, 2096, 8443];
@@ -4916,7 +5705,14 @@
             if (CF_HTTPS_PORTS.includes(port)) {
                 
                 const wsNodeName = `${nodeName}-${port}-${atob('VHJvamFu')}-WS-TLS`;
-                const link = `${atob('dHJvamFuOi8v')}${password}@${item.ip}:${port}?security=tls&sni=${workerDomain}&fp=chrome&type=ws&host=${workerDomain}&path=${wsPath}#${encodeURIComponent(wsNodeName)}`;
+                let link = `${atob('dHJvamFuOi8v')}${password}@${item.ip}:${port}?security=tls&sni=${workerDomain}&fp=chrome&type=ws&host=${workerDomain}&path=${wsPath}`;
+                
+                // 如果启用了ECH，添加ech参数（ECH需要伪装成Chrome浏览器）
+                if (enableECH) {
+                    link += `&alpn=h3%2Ch2%2Chttp%2F1.1&ech=${encodeURIComponent('cloudflare-ech.com+https://dns.alidns.com/dns-query')}`;
+                }
+                
+                link += `#${encodeURIComponent(wsNodeName)}`;
                 links.push(link);
             } else if (CF_HTTP_PORTS.includes(port)) {
                 
@@ -4928,7 +5724,14 @@
             } else {
                 
                 const wsNodeName = `${nodeName}-${port}-${atob('VHJvamFu')}-WS-TLS`;
-                const link = `${atob('dHJvamFuOi8v')}${password}@${item.ip}:${port}?security=tls&sni=${workerDomain}&fp=chrome&type=ws&host=${workerDomain}&path=${wsPath}#${encodeURIComponent(wsNodeName)}`;
+                let link = `${atob('dHJvamFuOi8v')}${password}@${item.ip}:${port}?security=tls&sni=${workerDomain}&fp=chrome&type=ws&host=${workerDomain}&path=${wsPath}`;
+                
+                // 如果启用了ECH，添加ech参数（ECH需要伪装成Chrome浏览器）
+                if (enableECH) {
+                    link += `&alpn=h3%2Ch2%2Chttp%2F1.1&ech=${encodeURIComponent('cloudflare-ech.com+https://dns.alidns.com/dns-query')}`;
+                }
+                
+                link += `#${encodeURIComponent(wsNodeName)}`;
                 links.push(link);
             }
         });
@@ -5324,26 +6127,32 @@
             egi = githubIPsControl !== 'no' && githubIPsControl !== false && githubIPsControl !== 'false';
         }
         
+        const echControl = getConfigValue('ech', '');
+        if (echControl !== undefined && echControl !== '') {
+            enableECH = echControl === 'yes' || echControl === true || echControl === 'true';
+        }
+        
+        // 如果启用了ECH，自动启用仅TLS模式（避免80端口干扰）
+        // ECH需要TLS才能工作，所以必须禁用非TLS节点
+        if (enableECH) {
+            disableNonTLS = true;
+        }
+        
+        // 检查dkby配置（如果手动设置了dkby=yes，也会启用仅TLS）
+        const dkbyControl = getConfigValue('dkby', '');
+        if (dkbyControl && dkbyControl.toLowerCase() === 'yes') {
+            disableNonTLS = true;
+        }
+        
         cp = getConfigValue('d', '') || '';
         
         piu = getConfigValue('yxURL', '') || 'https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt';
         
         const envFallback = getConfigValue('p', '');
         if (envFallback) {
-            const fallbackValue = envFallback.toLowerCase();
-            if (fallbackValue.includes(']:')) {
-                const lastColonIndex = fallbackValue.lastIndexOf(':');
-                fallbackPort = fallbackValue.slice(lastColonIndex + 1);
-                fallbackAddress = fallbackValue.slice(0, lastColonIndex);
-            } else if (!fallbackValue.includes(']:') && !fallbackValue.includes(']')) {
-                [fallbackAddress, fallbackPort = '443'] = fallbackValue.split(':');
-            } else {
-                fallbackAddress = fallbackValue;
-                fallbackPort = '443';
-            }
+            fallbackAddress = envFallback.trim();
         } else {
             fallbackAddress = '';
-            fallbackPort = '443';
         }
         
         socks5Config = getConfigValue('s', '') || '';
