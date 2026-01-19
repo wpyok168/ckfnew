@@ -114,18 +114,21 @@ jobs:
 
           # Step 1: terser 预压缩
           echo "🛠️ 使用 terser 初步压缩..."
-          terser /tmp/remote_worker.js --compress --mangle --output /tmp/min_worker.js
-
-          # Step 2: 检查结果
-          if [[ -f "_worker.js" ]]; then
-            COMPRESSED_SIZE=$(stat -c%s _worker.js 2>/dev/null || stat -f%z _worker.js 2>/dev/null)
-            echo "📏 压缩后大小: $COMPRESSED_SIZE 字节"
-          else
-            echo "❌ 压缩失败，使用原始文件"
-            cp /tmp/remote_worker.js _worker.js
+          # 关键修改1：确保terser命令执行成功，否则退出
+          if ! terser /tmp/remote_worker.js --compress --mangle --output /tmp/min_worker.js; then
+            echo "❌ terser压缩失败，使用原始文件"
+            cp /tmp/remote_worker.js /tmp/min_worker.js
           fi
 
-          # Step 3: 体积与比例报告
+          # Step 2: 将压缩后的文件复制到_worker.js（核心修复点）
+          cp /tmp/min_worker.js _worker.js
+          echo "✅ 压缩后的文件已保存到 _worker.js"
+
+          # Step 3: 检查结果并输出大小
+          COMPRESSED_SIZE=$(stat -c%s _worker.js 2>/dev/null || stat -f%z _worker.js 2>/dev/null)
+          echo "📏 压缩后大小: $COMPRESSED_SIZE 字节"
+
+          # Step 4: 体积与比例报告
           FINAL_SIZE=$(stat -c%s _worker.js 2>/dev/null || stat -f%z _worker.js 2>/dev/null)
           ORIGINAL_SIZE=$(stat -c%s source.js 2>/dev/null || stat -f%z source.js 2>/dev/null)
           COMPRESSION_RATIO=$(( (FINAL_SIZE * 100) / ORIGINAL_SIZE ))
