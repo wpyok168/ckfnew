@@ -65,7 +65,7 @@ jobs:
         id: remote_info
         run: |
           echo "🌍 $(date '+%Y-%m-%d %H:%M:%S') - 正在获取远程文件..."
-          RAW_URL="https://raw.githubusercontent.com/wpyok168/cfnewup/refs/heads/main/_worker.js"
+          RAW_URL="https://raw.githubusercontent.com/cmliu/edgetunnel/refs/heads/main/_worker.js"
           
           for i in {1..3}; do
             echo "🔁 第 $i 次尝试获取远程文件..."
@@ -127,23 +127,19 @@ jobs:
           # Step 2: javascript-obfuscator 混淆（方案2）
           echo "🧩 使用 javascript-obfuscator 混淆..."
           # javascript-obfuscator 混淆（已修正选项名）
-          javascript-obfuscator /tmp/min_worker.js --output _worker.js \
-          --compact true \
-          --control-flow-flattening true \
-          --control-flow-flattening-threshold 0.7 \
-          --dead-code-injection true \
-          --dead-code-injection-threshold 0.35 \
-          --disable-console-output true \
-          --identifier-names-generator hexadecimal \
-          --rename-globals true \
-          --string-array true \
-          --string-array-encoding rc4 \
-          --string-array-threshold 0.9 \
-          --string-array-rotate true \
-          --string-array-shuffle true \
-          --string-array-index-shift true \
-          --transform-object-keys true \
-          --unicode-escape-sequence true
+          javascript-obfuscator /tmp/min_worker.js --output _worker.js --compact true \
+            --control-flow-flattening true \
+            --control-flow-flattening-threshold 0.75 \
+            --dead-code-injection true \
+            --dead-code-injection-threshold 0.4 \
+            --disable-console-output true \
+            --identifier-names-generator hexadecimal \
+            --string-array true \
+            --string-array-encoding rc4 \
+            --string-array-threshold 0.8 \
+            --string-array-rotate true \
+            --string-array-shuffle true \
+            --transform-object-keys true
 
 
           # Step 3: 检查结果
@@ -168,32 +164,13 @@ jobs:
           if [[ $FINAL_SIZE -gt 1048576 ]]; then
             echo "⚠️ 警告：文件超过 1MB，可能影响 Cloudflare 部署"
           fi
- 
-       - name: 🌐 下载远程 README.md（带校验）
-        id: download_readme
-        run: |
-          echo "========== 远程 README.md 下载 =========="
-          RAW_README_URL="https://raw.githubusercontent.com/byJoey/cfnew/refs/heads/main/README.md"
-          
-          curl -f -s -L \
-            -H "Cache-Control: no-cache" \
-            -o /tmp/README.md "$RAW_URL" || { echo "❌ README下载失败，但继续执行"; }
-          
-          README_SIZE=$(wc -c < /tmp/README.md 2>/dev/null || echo 0)
-          if [[ $README_SIZE -gt 100 ]]; then
-            echo "✅ README.md 下载成功，大小: $README_SIZE 字节"
-            echo "README_DOWNLOADED=true" >> $GITHUB_ENV
-          else
-            echo "❌ README.md 下载失败或过小"
-            echo "README_DOWNLOADED=false" >> $GITHUB_ENV
-          fi         
 
       - name: 📝 提交更改
         if: env.UPDATE_NEEDED == 'true'
         run: |
           echo "📝 $(date '+%Y-%m-%d %H:%M:%S') - 准备提交更改..."
           echo "$REMOTE_VERSION" > version.txt
-          git add source.js _worker.js version.txt README.md
+          git add source.js _worker.js version.txt
           if git diff --staged --quiet; then
             echo "ℹ️ 无更改，跳过提交"
             exit 0
