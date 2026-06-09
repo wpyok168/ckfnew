@@ -27,16 +27,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global pull.rebase false
 
-      - name: 🔍 检查本地文件
-        id: check
-        run: |
-          if [[ -f "version.txt" ]]; then
-            echo "LOCAL_VER=$(cat version.txt)" >> $GITHUB_ENV
-            echo "HAS_VER=1" >> $GITHUB_ENV
-          else
-            echo "HAS_VER=0" >> $GITHUB_ENV
-          fi
-
       - name: 🌐 获取远程文件
         id: remote
         run: |
@@ -45,18 +35,7 @@ jobs:
           HASH=$(sha256sum /tmp/remote.js | head -c16)
           echo "REMOTE_HASH=$HASH" >> $GITHUB_ENV
 
-      - name: 📊 判断是否需要更新
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "UPDATE=1" >> $GITHUB_ENV
-          elif [[ "$HAS_VER" == "1" && "$LOCAL_VER" == "$REMOTE_HASH" ]]; then
-            echo "UPDATE=0" >> $GITHUB_ENV
-          else
-            echo "UPDATE=1" >> $GITHUB_ENV
-          fi
-
       - name: 🛠️ 下载并自动修复 CF 1101 特征码（无混淆）
-        if: env.UPDATE == '1'
         run: |
           cp /tmp/remote.js source.js
           cp /tmp/remote.js _worker.js
@@ -89,18 +68,19 @@ jobs:
 
           echo "✅ 所有 CF 1101 特征码已自动修复"
 
-      - name: 📝 提交更新
-        if: env.UPDATE == '1'
+      - name: 📝 更新版本号
         run: |
           echo "$REMOTE_HASH" > version.txt
+
+      - name: 🚀 提交并推送（强制成功，不报错）
+        run: |
           git add source.js _worker.js version.txt
-          git commit -m "🔄 Auto Update (Fixed CF 1101)
+          git diff --staged --quiet || git commit -m "🔄 Auto Update (Fixed CF 1101)
           版本：$REMOTE_HASH
           更新时间：$(date '+%Y-%m-%d %H:%M:%S')"
           git push
 
       - name: 📦 发布到 Releases
-        if: env.UPDATE == '1'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: auto-${{ github.sha }}
