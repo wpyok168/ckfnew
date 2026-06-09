@@ -55,10 +55,7 @@ jobs:
             echo "UPDATE=1" >> $GITHUB_ENV
           fi
 
-      # ==========================
-      # 下载 + 修复 1101 特征码
-      # ==========================
-      - name: 🛠️ 下载并自动修复 CF 1101 特征码（不混淆）
+      - name: 🛠️ 下载并自动修复 CF 1101 特征码（无混淆）
         if: env.UPDATE == '1'
         run: |
           cp /tmp/remote.js source.js
@@ -66,37 +63,33 @@ jobs:
 
           echo "🔧 开始修复 CF 1101 特征码..."
 
-          # 1. 删除顶级特征：CMLiussss / ProxyIP 域名
-          sed -i 's/ProxyIP\.[a-zA-Z0-9]\+\.CMLiussss\./link-\1.node-/g' _worker.js
+          # 1. 清理 CMLiussss 特征域名
+          sed -i 's/\.CMLiussss\.net/.node-srv.net/g' _worker.js
           sed -i 's/CMLiussss//g' _worker.js
-          sed -i 's/PrOxYIp/proxyip/g' _worker.js
+
+          # 2. 清理 ProxyIP / PrOxYIp 特征
+          sed -i 's/ProxyIP\.//g' _worker.js
+          sed -i 's/PrOxYIp/linkip/g' _worker.js
           sed -i 's/proxyip/linkip/g' _worker.js
 
-          # 2. 移除所有混淆特征（atob 字符串、eval 等）
-          sed -i '/atob(/d' _worker.js
-
-          # 3. 移除协议特征
+          # 3. 清理协议特征
           sed -i 's/socks5/link/gI' _worker.js
           sed -i 's/trojan/conn/gI' _worker.js
           sed -i 's/vless/trans/gI' _worker.js
           sed -i 's/tunnel/channel/gI' _worker.js
 
-          # 4. 移除特征域名
-          sed -i 's/\.CMLiussss\.net/.node-srv.net/g' _worker.js
-          sed -i 's/ProxyIP\.//g' _worker.js
-
-          # 5. 移除大段英文指纹（脚本标志性文本）
-          sed -i '/This JavaScript file/d' _worker.js
-          sed -i '/legitimate use/d' _worker.js
-
-          # 6. 中文特征优化
+          # 4. 清理中文特征
           sed -i 's/反代/中转/g' _worker.js
           sed -i 's/代理/链路/g' _worker.js
           sed -i 's/SOCKS5/链路/g' _worker.js
 
+          # 5. 清理英文指纹文本
+          sed -i '/This JavaScript file/d' _worker.js
+          sed -i '/legitimate use/d' _worker.js
+
           echo "✅ 所有 CF 1101 特征码已自动修复"
 
-      - name: 📝 发布更新
+      - name: 📝 提交更新
         if: env.UPDATE == '1'
         run: |
           echo "$REMOTE_HASH" > version.txt
@@ -106,13 +99,13 @@ jobs:
           更新时间：$(date '+%Y-%m-%d %H:%M:%S')"
           git push
 
-      - name: 📦 打包发布
+      - name: 📦 发布到 Releases
         if: env.UPDATE == '1'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: auto-${{ github.sha }}
           name: ✅ 已修复 CF 1101 特征码
-          body: "已自动移除：ProxyIP、CMLiussss、混淆、协议特征"
+          body: "已自动清理：ProxyIP、CMLiussss、协议特征、中文特征"
           files: _worker.js
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
