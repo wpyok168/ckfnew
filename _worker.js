@@ -1,5 +1,5 @@
-// CFnew - 终端 v2.9.8c
-// 版本: v2.9.8c 
+// CFnew - 终端 v2.9.9
+// 版本: v2.9.9 
 import { connect as 连接 } from 'cloudflare:sockets';
 const 基础64文本解码器 = new TextDecoder();
 function 解码64(文本) {
@@ -14,6 +14,7 @@ let 链路5配置 = '';
 let 自定义优选地址列表 = [];
 let 自定义优选域名列表 = [];
 let 启用链路降级 = false;
+let 仅走链路 = false;
 let 禁用非传输层安全 = false;
 let 禁用优选 = false;
 let 启用地区匹配 = true;
@@ -320,6 +321,23 @@ const 错误_链路无可用方法 = atob('bm8gYWNjZXB0YWJsZSBtZXRob2Rz');
 const 错误_链路需要认证 = atob('c29ja3Mgc2VydmVyIG5lZWRzIGF1dGg=');
 const 错误_链路认证失败 = atob('ZmFpbCB0byBhdXRoIHNvY2tzIHNlcnZlcg==');
 const 错误_链路连接失败 = atob('ZmFpbCB0byBvcGVuIHNvY2tzIGNvbm5lY3Rpb24=');
+const 错误_链路隧道失败 = atob('ZmFpbCB0byBvcGVuIHByb3h5IHR1bm5lbA==');
+const 错误_链路响应异常 = atob('aW52YWxpZCBwcm94eSByZXNwb25zZQ==');
+const 前缀_套接字5 = atob('c29ja3M1Oi8v');
+const 前缀_套接字 = atob('c29ja3M6Ly8=');
+const 前缀_超文本 = atob('aHR0cDovLw==');
+const 前缀_安全超文本 = atob('aHR0cHM6Ly8=');
+const 文本_连接方法 = atob('Q09OTkVDVA==');
+const 文本_协议版本 = atob('IEhUVFAvMS4x');
+const 文本_主机头 = atob('SG9zdDog');
+const 文本_链路认证头 = atob('UHJveHktQXV0aG9yaXphdGlvbjogQmFzaWMg');
+const 文本_链路保持 = atob('UHJveHktQ29ubmVjdGlvbjogS2VlcC1BbGl2ZQ==');
+const 文本_用户链路头 = atob('VXNlci1BZ2VudDogTW96aWxsYS81LjA=');
+const 文本_换行 = atob('DQo=');
+const 文本_响应前缀 = atob('SFRUUC8=');
+const 链路种类_套接字5 = 'p5';
+const 链路种类_隧道 = 'pt';
+const 链路种类_安全隧道 = 'pts';
 let 已解析链路5配置 = {};
 let 是否链路已启用 = false;
 const 地址类型_四版 = 1;
@@ -699,7 +717,9 @@ export default {
         }
       }
       const 值控制711 = 获取配置文本值('qj', 配置默认值.qj, 本地值734.qj || 本地值734.QJ);
-      启用链路降级 = !!(值控制711 && 值控制711.toLowerCase() === 'no');
+      const 值控制711值 = (值控制711 || '').toLowerCase();
+      启用链路降级 = 值控制711值 === 'no';
+      仅走链路 = 值控制711值 === 'only';
       const 值控制710 = 获取配置文本值('dkby', 配置默认值.dkby, 本地值734.dkby || 本地值734.DKBY);
       禁用非传输层安全 = !!(值控制710 && 值控制710.toLowerCase() === 'yes');
       const 值控制709 = 获取配置文本值('yxby', 配置默认值.yxby, 本地值734.yxby || 本地值734.YXBY);
@@ -1004,8 +1024,8 @@ export default {
           const 语言值661 = 是否值664 ? 'fa-IR' : 'zh-CN';
           const 本地值660 = {
             zh: {
-              title: '终端 v2.9.8c',
-              terminal: '终端 v2.9.8c',
+              title: '终端 v2.9.9',
+              terminal: '终端 v2.9.9',
               congratulations: '恭喜你来到这',
               enterU: '请输入你U变量的值',
               enterD: '请输入你D变量的值',
@@ -1021,8 +1041,8 @@ export default {
               reenter: '请重新输入有效的UUID'
             },
             fa: {
-              title: 'ترمینال v2.9.8c',
-              terminal: 'ترمینال v2.9.8c',
+              title: 'ترمینال v2.9.9',
+              terminal: 'ترمینال v2.9.9',
               congratulations: 'تبریک می‌گوییم به شما',
               enterU: 'لطفا مقدار متغیر U خود را وارد کنید',
               enterD: 'لطفا مقدار متغیر D خود را وارد کنید',
@@ -3235,9 +3255,10 @@ async function 处理值值384(地址类型383, 主机, 端口数字, 原始数�
   const 实际链路已启用 = 请求链路配置 ? true : 是否链路已启用;
   const 值数据378 = 处理值值8数组(原始数据);
   async function 连接值发送(地址377, 端口376, 值链路 = false) {
-    const 远程值375 = 值链路 ? await 处理值链路连接(地址类型383, 地址377, 端口376, 实际链路配置) : await 连接值套接字(地址377, 端口376, 请求值379, 传输连接竞速数);
+    // 走链路时首包交给握手函数在释放写入器前发出，避免换写入器导致连接被重置
+    const 远程值375 = 值链路 ? await 处理值链路连接(地址类型383, 地址377, 端口376, 实际链路配置, 请求值379, 值数据378) : await 连接值套接字(地址377, 端口376, 请求值379, 传输连接竞速数);
     const 写入器374 = 远程值375.writable.getWriter();
-    if (值数据378.byteLength) await 写入器374.write(值数据378);
+    if (!值链路 && 值数据378.byteLength) await 写入器374.write(值数据378);
     return {
       remoteSock: 远程值375,
       writer: 写入器374
@@ -3273,6 +3294,11 @@ async function 处理值值384(地址类型383, 主机, 端口数字, 原始数�
     });
   }
   async function 处理重试连接() {
+    // 只走链路：不回落到直连或备用地址，避免出口 IP 泄漏
+    if (仅走链路 && 实际链路已启用) {
+      关闭套接字值(网页套接字382);
+      return;
+    }
     if (启用链路降级 && 实际链路已启用) {
       try {
         const {
@@ -3325,10 +3351,12 @@ async function 处理值值384(地址类型383, 主机, 端口数字, 原始数�
     }
   }
   try {
+    // 首跳是否走链路：只走链路 → 必走；优先直连 → 不走；其余按链路是否配置
+    const 首跳走链路 = 仅走链路 && 实际链路已启用 ? true : 启用链路降级 ? false : 实际链路已启用;
     const {
       remoteSock: 值套接字358,
       writer: 值写入器
-    } = await 连接值发送(主机, 端口数字, 启用链路降级 ? false : 实际链路已启用);
+    } = await 连接值发送(主机, 端口数字, 首跳走链路);
     处理值远程(值套接字358, 值写入器, () => {
       处理值值当前(值套接字358, 值写入器);
       处理重试连接();
@@ -3739,54 +3767,214 @@ async function 处理值用户数据报(用户数据报块, 网页套接字, 值
     await 连接值279(值套接字, 网页套接字, 头部, null);
   } catch (错误263) {}
 }
-async function 处理值链路连接(地址类型, 地址262, 端口261, 链路配置 = 已解析链路5配置) {
+async function 处理值链路连接(地址类型, 地址262, 端口261, 链路配置 = 已解析链路5配置, 请求值258 = null, 首包数据 = null) {
+  // 按链路种类分派：隧道走建隧请求，其余保持套接字5 握手
+  if (链路配置 && (链路配置.kind === 链路种类_隧道 || 链路配置.kind === 链路种类_安全隧道)) {
+    return 处理值隧道连接(地址262, 端口261, 链路配置, 请求值258, 首包数据);
+  }
   const {
     username: 本地值260,
     password: 密码259,
     hostname: 主机名258,
     socksPort: 链路端口257
   } = 链路配置;
-  const 套接字256 = 连接({
-    hostname: 主机名258,
-    port: 链路端口257
-  });
+  // 优先用请求自带的 fetcher 建连，回退到全局连接
+  const 套接字256 = 处理打开值套接字(主机名258, 链路端口257, 请求值258);
   const 写入器255 = 套接字256.writable.getWriter();
   await 写入器255.write(new Uint8Array(本地值260 ? [5, 2, 0, 2] : [5, 1, 0]));
   const 读取器254 = 套接字256.readable.getReader();
-  let 本地值253 = (await 读取器254.read()).value;
+  // 响应可能分片到达，按需累积到足够长度再解析；残留字节留给下一步
+  let 残留字节 = new Uint8Array(0);
+  async function 读满(需要长度) {
+    while (残留字节.length < 需要长度) {
+      const { value: 分片, done: 已结束 } = await 读取器254.read();
+      if (已结束 || !分片) throw new Error(错误_链路连接失败);
+      残留字节 = 拼接值8数组(残留字节, 分片);
+    }
+    return 残留字节;
+  }
+  function 取走(长度) {
+    const 结果 = 残留字节.subarray(0, 长度);
+    残留字节 = 残留字节.subarray(长度);
+    return 结果;
+  }
+  let 本地值253 = await 读满(2);
   if (本地值253[0] !== 5 || 本地值253[1] === 255) throw new Error(错误_链路无可用方法);
-  if (本地值253[1] === 2) {
+  const 选中方法 = 本地值253[1];
+  取走(2);
+  if (选中方法 === 2) {
     if (!本地值260 || !密码259) throw new Error(错误_链路需要认证);
     const 编码器252 = new TextEncoder();
     const 认证请求 = new Uint8Array([1, 本地值260.length, ...编码器252.encode(本地值260), 密码259.length, ...编码器252.encode(密码259)]);
     await 写入器255.write(认证请求);
-    本地值253 = (await 读取器254.read()).value;
+    本地值253 = await 读满(2);
     if (本地值253[0] !== 1 || 本地值253[1] !== 0) throw new Error(错误_链路认证失败);
+    取走(2);
   }
+  // 统一用域名型寻址：调用方的地址类型编号在不同协议下含义不一致（值协议 2=域名，
+  // 木马协议 3=域名），按编号分支会把域名当成六版地址编错。交给链路自己解析更稳。
   const 编码器251 = new TextEncoder();
-  let 本地值250;
-  switch (地址类型) {
-    case 地址类型_四版:
-      本地值250 = new Uint8Array([1, ...地址262.split('.').map(Number)]);
-      break;
-    case 地址类型_网址:
-      本地值250 = new Uint8Array([3, 地址262.length, ...编码器251.encode(地址262)]);
-      break;
-    case 地址类型_六版:
-      本地值250 = new Uint8Array([4, ...地址262.split(':').flatMap(横值 => [parseInt(横值.slice(0, 2), 16), parseInt(横值.slice(2), 16)])]);
-      break;
-    default:
-      throw new Error(错误_无效地址类型);
-  }
+  const 目标字节 = 编码器251.encode(规范化目标地址(地址262));
+  const 本地值250 = new Uint8Array([3, 目标字节.length, ...目标字节]);
   await 写入器255.write(new Uint8Array([5, 1, 0, ...本地值250, 端口261 >> 8, 端口261 & 255]));
-  本地值253 = (await 读取器254.read()).value;
+  // 连接应答长度随绑定地址类型而变，先读固定的 4 字节头再按类型补齐
+  本地值253 = await 读满(4);
   if (本地值253[1] !== 0) throw new Error(错误_链路连接失败);
+  const 绑定地址类型 = 本地值253[3];
+  let 应答长度;
+  if (绑定地址类型 === 1) {
+    应答长度 = 10;
+  } else if (绑定地址类型 === 4) {
+    应答长度 = 22;
+  } else if (绑定地址类型 === 3) {
+    应答长度 = 7 + (await 读满(5))[4];
+  } else {
+    throw new Error(错误_链路响应异常);
+  }
+  await 读满(应答长度);
+  取走(应答长度);
+  // 首包必须在释放写入器之前发出，与握手共用同一个写入器
+  if (首包数据 && 首包数据.byteLength) await 写入器255.write(首包数据);
   写入器255.releaseLock();
   读取器254.releaseLock();
+  // 应答之后若已捎带目标数据，重新挂回流首部，避免丢首包
+  if (残留字节.length) return 包装残留套接字(套接字256, 残留字节);
   return 套接字256;
 }
+// 六版地址在域名型寻址里不带方括号
+function 规范化目标地址(地址234值) {
+  const 文本 = String(地址234值 || '');
+  return /^\[.*\]$/.test(文本) ? 文本.slice(1, -1) : 文本;
+}
+async function 处理值隧道连接(地址238值, 端口237值, 链路配置, 请求值236值 = null, 首包数据235值 = null) {
+  const {
+    username: 隧道用户,
+    password: 隧道密码,
+    hostname: 隧道主机,
+    socksPort: 隧道端口,
+    kind: 隧道种类
+  } = 链路配置;
+  const 连接选项 = 隧道种类 === 链路种类_安全隧道 ? {
+    secureTransport: 'on',
+    allowHalfOpen: false
+  } : undefined;
+  const 目标参数 = {
+    hostname: 隧道主机,
+    port: 隧道端口
+  };
+  // 优先用请求自带的 fetcher 建连，回退到全局连接
+  const 套接字 = 请求值236值 && typeof 请求值236值.connect === 'function' ? (连接选项 === undefined ? 请求值236值.connect(目标参数) : 请求值236值.connect(目标参数, 连接选项)) : 连接(目标参数, 连接选项);
+  if (套接字?.opened) await 套接字.opened;
+  // IPv6 目标在请求行里要带方括号
+  const 目标主机 = 地址238值.includes(':') && !/^\[.*\]$/.test(地址238值) ? `[${地址238值}]` : 地址238值;
+  const 目标地址 = `${目标主机}:${端口237值}`;
+  let 请求头 = `${文本_连接方法} ${目标地址}${文本_协议版本}${文本_换行}` + `${文本_主机头}${目标地址}${文本_换行}` + `${文本_用户链路头}${文本_换行}` + `${文本_链路保持}${文本_换行}`;
+  if (隧道用户) {
+    请求头 += `${文本_链路认证头}${btoa(`${隧道用户}:${隧道密码 || ''}`)}${文本_换行}`;
+  }
+  请求头 += 文本_换行;
+  const 写入器 = 套接字.writable.getWriter();
+  const 读取器 = 套接字.readable.getReader();
+  try {
+    await 写入器.write(new TextEncoder().encode(请求头));
+    // 响应可能分片到达，累积到头部结束（空行）为止
+    const 分隔 = [13, 10, 13, 10];
+    let 缓冲 = new Uint8Array(0);
+    let 头部结束 = -1;
+    while (头部结束 < 0) {
+      const {
+        value: 分片,
+        done: 已结束
+      } = await 读取器.read();
+      if (已结束 || !分片) throw new Error(错误_链路隧道失败);
+      缓冲 = 拼接值8数组(缓冲, 分片);
+      for (let 位置 = 0; 位置 + 3 < 缓冲.length; 位置++) {
+        if (缓冲[位置] === 分隔[0] && 缓冲[位置 + 1] === 分隔[1] && 缓冲[位置 + 2] === 分隔[2] && 缓冲[位置 + 3] === 分隔[3]) {
+          头部结束 = 位置 + 4;
+          break;
+        }
+      }
+      if (头部结束 < 0 && 缓冲.length > 8192) throw new Error(错误_链路响应异常);
+    }
+    const 状态行 = 共享解码器.decode(缓冲.subarray(0, Math.min(头部结束, 128)));
+    if (!状态行.startsWith(文本_响应前缀)) throw new Error(错误_链路响应异常);
+    const 状态码 = Number(状态行.split(' ')[1]);
+    if (!(状态码 >= 200 && 状态码 < 300)) throw new Error(错误_链路隧道失败);
+    // 链路在头部之后可能已经捎带了目标数据，需要交还给下游
+    const 残留数据 = 缓冲.subarray(头部结束);
+    // 首包在释放写入器之前发出
+    if (首包数据235值 && 首包数据235值.byteLength) await 写入器.write(首包数据235值);
+    写入器.releaseLock();
+    读取器.releaseLock();
+    if (残留数据.byteLength) return 包装残留套接字(套接字, 残留数据);
+    return 套接字;
+  } catch (隧道错误) {
+    try {
+      写入器.releaseLock();
+    } catch (忽略隧道1) {}
+    try {
+      读取器.releaseLock();
+    } catch (忽略隧道2) {}
+    try {
+      套接字.close();
+    } catch (忽略隧道3) {}
+    throw 隧道错误;
+  }
+}
+// 把建隧响应里捎带的目标数据重新挂回可读流首部
+function 包装残留套接字(套接字, 残留数据) {
+  let 上游读取器 = null;
+  const 新可读 = new ReadableStream({
+    start(控制器) {
+      控制器.enqueue(残留数据);
+      上游读取器 = 套接字.readable.getReader();
+    },
+    async pull(控制器) {
+      const {
+        value: 分片,
+        done: 已结束
+      } = await 上游读取器.read();
+      if (已结束) {
+        控制器.close();
+        return;
+      }
+      控制器.enqueue(分片);
+    },
+    cancel(原因) {
+      try {
+        上游读取器?.cancel(原因);
+      } catch (忽略取消) {}
+    }
+  });
+  return {
+    readable: 新可读,
+    writable: 套接字.writable,
+    closed: 套接字.closed,
+    opened: 套接字.opened,
+    close: () => 套接字.close()
+  };
+}
 function 解析链路配置(地址249) {
-  let [本地值248, 本地值247] = 地址249.split("@").reverse();
+  let 剩余地址 = String(地址249 || '').trim();
+  // 按前缀识别链路种类，无前缀保持原有行为（套接字5）
+  let 链路种类 = 链路种类_套接字5;
+  const 小写地址 = 剩余地址.toLowerCase();
+  if (小写地址.startsWith(前缀_安全超文本)) {
+    链路种类 = 链路种类_安全隧道;
+    剩余地址 = 剩余地址.slice(前缀_安全超文本.length);
+  } else if (小写地址.startsWith(前缀_超文本)) {
+    链路种类 = 链路种类_隧道;
+    剩余地址 = 剩余地址.slice(前缀_超文本.length);
+  } else if (小写地址.startsWith(前缀_套接字5)) {
+    剩余地址 = 剩余地址.slice(前缀_套接字5.length);
+  } else if (小写地址.startsWith(前缀_套接字)) {
+    剩余地址 = 剩余地址.slice(前缀_套接字.length);
+  }
+  // 去掉可能存在的尾部路径，只留 认证@主机:端口
+  const 路径位置 = 剩余地址.indexOf('/');
+  if (路径位置 >= 0) 剩余地址 = 剩余地址.slice(0, 路径位置);
+  if (!剩余地址) throw new Error(错误_无效链路地址);
+  let [本地值248, 本地值247] = 剩余地址.split("@").reverse();
   let 本地值246, 密码245, 主机名244, 链路端口;
   if (本地值247) {
     const 本地值243 = 本地值247.split(":");
@@ -3794,15 +3982,23 @@ function 解析链路配置(地址249) {
     [本地值246, 密码245] = 本地值243;
   }
   const 本地值242 = 本地值248.split(":");
-  链路端口 = Number(本地值242.pop());
-  if (isNaN(链路端口)) throw new Error(错误_无效链路地址);
+  const 末段值 = 本地值242.pop();
+  链路端口 = Number(末段值);
+  // 隧道模式允许省略端口，按明文 80 / 安全 443 兜底
+  if (isNaN(链路端口)) {
+    if (链路种类 === 链路种类_套接字5) throw new Error(错误_无效链路地址);
+    本地值242.push(末段值);
+    链路端口 = 链路种类 === 链路种类_安全隧道 ? 443 : 80;
+  }
   主机名244 = 本地值242.join(":");
+  if (!主机名244) throw new Error(错误_无效链路地址);
   if (主机名244.includes(":") && !/^\[.*\]$/.test(主机名244)) throw new Error(错误_无效链路地址);
   return {
     username: 本地值246,
     password: 密码245,
     hostname: 主机名244,
-    socksPort: 链路端口
+    socksPort: 链路端口,
+    kind: 链路种类
   };
 }
 async function 处理订阅值(请求241, 用户240 = null) {
@@ -3886,7 +4082,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
       fetchURLPlaceholder: '输入优选IP的URL地址',
       generateIP: '生成IP',
       fetchIP: '获取IP',
-      linkConfig: 解码64('U09DS1M16YWN572uIChzKTo='),
+      linkConfig: 解码64('5Luj55CG6YWN572uIChzKTo='),
       customHomepage: '自定义首页URL (homepage):',
       customHomepagePlaceholder: '例如: https://example.com',
       customHomepageHint: '设置自定义URL作为首页伪装。访问根路径 / 时将显示该URL的内容。留空则显示默认终端页面。',
@@ -3900,7 +4096,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
       enableGitHubPreferred: '启用自定义优选',
       allowAPIManagement: '允许API管理 (ae):',
       regionMatching: '地区匹配 (rm):',
-      downgradeControl: '降级控制 (qj):',
+      downgradeControl: 解码64('5Ye656uZ5pa55byPIChxaik6'),
       tlsControl: 'TLS控制 (dkby):',
       preferredControl: '优选控制 (yxby):',
       saveAdvanced: '保存高级配置',
@@ -3934,9 +4130,10 @@ async function 处理订阅值(请求241, 用户240 = null) {
       regionMatchingDefault: '默认（启用地区匹配）',
       regionMatchingNo: '关闭地区匹配',
       regionMatchingHint: '设置为"关闭"时不进行地区智能匹配',
-      downgradeControlDefault: '默认（不启用降级）',
-      downgradeControlNo: '启用降级模式',
-      downgradeControlHint: 解码64('6K6+572u5Li6IuWQr+eUqCLml7bvvJpDRuebtOi/nuWksei0peKGklNPQ0tTNei/nuaOpeKGkmZhbGxiYWNr5Zyw5Z2A'),
+      downgradeControlDefault: 解码64('5LyY5YWI6LWw5Luj55CG77yI6buY6K6k77yJ'),
+      downgradeControlNo: 解码64('5LyY5YWI55u06L+e77yM5aSx6LSl5YaN6LWw5Luj55CG'),
+      downgradeControlOnly: 解码64('5Y+q6LWw5Luj55CG77yM5LiN5Zue6JC9'),
+      downgradeControlHint: 解码64('5rKh5aGr5Luj55CG5pe25LiJ5Liq6YCJ6aG56YO95LiA5qC377yM6YO95piv55u06L+e44CC5Y+q6LWw5Luj55CG5pe26L+e5LiN5LiK5bCx5pat5byA77yM5Ye65Y+jIElQIOS4jeS8mua8jw=='),
       tlsControlDefault: '默认（保留所有节点）',
       tlsControlYes: '仅TLS节点',
       tlsControlHint: '设置为"仅TLS节点"时只生成带TLS的节点，不生成非TLS节点（如80端口）',
@@ -3955,7 +4152,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
         FI: '🇫🇮 芬兰',
         GB: '🇬🇧 英国'
       },
-      terminal: '终端 v2.9.8c',
+      terminal: '终端 v2.9.9',
       githubProject: 'GitHub 项目',
       优选工具: '优选工具',
       autoDetectClient: '自动识别',
@@ -4045,7 +4242,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
       fetchURLPlaceholder: 'آدرس URL لیست IP را وارد کنید',
       generateIP: 'تولید IP',
       fetchIP: 'دریافت IP',
-      linkConfig: 解码64('2KrZhti424zZhdin2KogU09DS1M1IChzKTo='),
+      linkConfig: 解码64('2KrZhti424zZhdin2Kog2b7YsdmI2qnYs9uMIChzKTo='),
       customHomepage: 'URL صفحه اصلی سفارشی (homepage):',
       customHomepagePlaceholder: 'مثال: https://example.com',
       customHomepageHint: 'تنظیم URL سفارشی به عنوان استتار صفحه اصلی. هنگام دسترسی به مسیر اصلی / محتوای این URL نمایش داده می‌شود. اگر خالی بگذارید صفحه ترمینال پیش‌فرض نمایش داده می‌شود.',
@@ -4059,7 +4256,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
       enableGitHubPreferred: 'فعال‌سازی ترجیح سفارشی',
       allowAPIManagement: 'اجازه مدیریت API (ae):',
       regionMatching: 'تطبیق منطقه (rm):',
-      downgradeControl: 'کنترل کاهش سطح (qj):',
+      downgradeControl: 解码64('2LHZiNi0INiu2LHZiNisIChxaik6'),
       tlsControl: 'کنترل TLS (dkby):',
       preferredControl: 'کنترل ترجیحی (yxby):',
       saveAdvanced: 'ذخیره تنظیمات پیشرفته',
@@ -4085,9 +4282,10 @@ async function 处理订阅值(请求241, 用户240 = null) {
       regionMatchingDefault: 'پیش‌فرض (فعال‌سازی تطبیق منطقه)',
       regionMatchingNo: 'بستن تطبیق منطقه',
       regionMatchingHint: 'وقتی "بستن" تنظیم شود، تطبیق هوشمند منطقه انجام نمی‌شود',
-      downgradeControlDefault: 'پیش‌فرض (عدم فعال‌سازی کاهش سطح)',
-      downgradeControlNo: 'فعال‌سازی حالت کاهش سطح',
-      downgradeControlHint: 解码64('2YjZgtiq24wgItmB2LnYp9mEIiDYqtmG2LjbjNmFINi02YjYrzog2KfYqti12KfZhCDZhdiz2KrZgtuM2YUgQ0Yg2YbYp9mF2YjZgdmCIOKGkiDYp9iq2LXYp9mEIFNPQ0tTNSDihpIg2KLYr9ix2LMgZmFsbGJhY2s='),
+      downgradeControlDefault: 解码64('2KfZiNmE2YjbjNiqINio2Kcg2b7YsdmI2qnYs9uMICjZvtuM2LTigIzZgdix2LYp'),
+      downgradeControlNo: 解码64('2KfZiNmE2YjbjNiqINio2Kcg2KfYqti12KfZhCDZhdiz2KrZgtuM2YXYjCDYr9ixINi12YjYsdiqINiu2LfYpyDZvtix2Yjaqdiz24w='),
+      downgradeControlOnly: 解码64('2YHZgti3INm+2LHZiNqp2LPbjNiMINio2K/ZiNmGINio2KfYstqv2LTYqg=='),
+      downgradeControlHint: 解码64('2Kfar9ixINm+2LHZiNqp2LPbjCDYqtmG2LjbjNmFINmG2LTYr9mHINio2KfYtNivINmH2LEg2LPZhyDar9iy24zZhtmHINuM2qnYs9in2YYg2Ygg2YXYs9iq2YLbjNmFINmH2LPYqtmG2K8uINiv2LEg2K3Yp9mE2Kog2YHZgti3INm+2LHZiNqp2LPbjNiMINin2KrYtdin2YQg2YbYp9mF2YjZgdmCINmC2LfYuSDZhduM4oCM2LTZiNivINmIIElQINiu2LHZiNis24wg2YHYp9i0INmG2YXbjOKAjNi02YjYrw=='),
       tlsControlDefault: 'پیش‌فرض (حفظ همه گره‌ها)',
       tlsControlYes: 'فقط گره‌های TLS',
       tlsControlHint: 'وقتی "فقط گره‌های TLS" تنظیم شود، فقط گره‌های با TLS تولید می‌شوند، گره‌های غیر TLS (مانند پورت 80) تولید نمی‌شوند',
@@ -4106,7 +4304,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
         FI: '🇫🇮 فنلاند',
         GB: '🇬🇧 بریتانیا'
       },
-      terminal: 'ترمینال v2.9.8c',
+      terminal: 'ترمینال v2.9.9',
       githubProject: 'پروژه GitHub',
       优选工具: 'ابزار ترجیح IP',
       autoDetectClient: 'تشخیص خودکار',
@@ -5305,8 +5503,8 @@ async function 处理订阅值(请求241, 用户240 = null) {
 
                         <div style="margin-bottom: 15px;">
                                 <label style="display: block; margin-bottom: 8px; color: #00f0ff; font-weight: bold; text-shadow: 0 0 3px #00f0ff;">${翻译值.linkConfig}</label>
-                                <input type="text" id="socksConfig" placeholder="${是否值236 ? 'مثال: user:pass@host:port یا host:port' : '例如: user:pass@host:port 或 host:port'}" style="width: 100%; padding: 12px; background: rgba(0, 0, 0, 0.8); border: 2px solid #00f0ff; color: #00f0ff; font-family: 'Courier New', monospace; font-size: 14px;">
-                                <small style="color: #7aa9c4; font-size: 0.85rem;">${是否值236 ? 解码64('2KLYr9ix2LMg2b7YsdmI2qnYs9uMIFNPQ0tTNdiMINio2LHYp9uMINin2YbYqtmC2KfZhCDYqtmF2KfZhSDYqtix2KfZgduM2qkg2K7YsdmI2KzbjCDYp9iz2KrZgdin2K/ZhyDZhduM4oCM2LTZiNiv') : 解码64('U09DS1M15Luj55CG5Zyw5Z2A77yM55So5LqO6L2s5Y+R5omA5pyJ5Ye656uZ5rWB6YeP')}</small>
+                                <input type="text" id="socksConfig" placeholder="${是否值236 ? 解码64('2YXYq9in2YQ6IHVzZXI6cGFzc0Bob3N0OnBvcnQg24zYpyBodHRwOi8vdXNlcjpwYXNzQGhvc3Q6cG9ydA==') : 解码64('5L6L5aaCOiB1c2VyOnBhc3NAaG9zdDpwb3J0IOaIliBodHRwOi8vdXNlcjpwYXNzQGhvc3Q6cG9ydA==')}" style="width: 100%; padding: 12px; background: rgba(0, 0, 0, 0.8); border: 2px solid #00f0ff; color: #00f0ff; font-family: 'Courier New', monospace; font-size: 14px;">
+                                <small style="color: #7aa9c4; font-size: 0.85rem;">${是否值236 ? 解码64('2KLYr9ix2LMg2b7YsdmI2qnYs9uMINiu2LHZiNis24wg2KjYsdin24wg2KfZhtiq2YLYp9mEINiq2YXYp9mFINiq2LHYp9mB24zaqSDYrtix2YjYrNuMLiDYqNiv2YjZhiDZvtuM2LTZiNmG2K8g2KjZhyDYtdmI2LHYqiBzNSDYr9ixINmG2LjYsSDar9ix2YHYqtmHINmF24zigIzYtNmI2K8=') : 解码64('5Ye656uZ5Luj55CG5Zyw5Z2A77yM55So5LqO6L2s5Y+R5omA5pyJ5Ye656uZ5rWB6YeP44CC5LiN5YaZ5YmN57yA6buY6K6k5oyJIHM1IOWkhOeQhg==')}</small>
                         </div>
                     </form>
 
@@ -5404,6 +5602,7 @@ async function 处理订阅值(请求241, 用户240 = null) {
                             <select id="downgradeControl" style="width: 100%; padding: 12px; background: rgba(0, 0, 0, 0.8); border: 2px solid #00f0ff; color: #00f0ff; font-family: 'Courier New', monospace; font-size: 14px;">
                                     <option value="">${翻译值.downgradeControlDefault}</option>
                                     <option value="no">${翻译值.downgradeControlNo}</option>
+                                    <option value="only">${翻译值.downgradeControlOnly}</option>
                             </select>
                                 <small style="color: #7aa9c4; font-size: 0.85rem;">${翻译值.downgradeControlHint}</small>
                         </div>
@@ -8583,7 +8782,9 @@ function 更新配置值() {
   自定义加密客户端问候域名 = 有效配置.customECHDomain || 配置默认值.customECHDomain;
   自定义应用层协议协商 = 规范化应用层协议协商(有效配置.alpn || '');
   禁用非传输层安全 = 有效配置.dkby === 'yes' || 启用加密客户端问候;
-  启用链路降级 = !!(有效配置.qj && 有效配置.qj.toLowerCase() === 'no');
+  const 降级控制值 = (有效配置.qj || '').toLowerCase();
+  启用链路降级 = 降级控制值 === 'no';
+  仅走链路 = 降级控制值 === 'only';
   自定义路径 = 有效配置.d || '';
   优选地址源 = 有效配置.yxURL || '';
   回退地址 = 有效配置.p ? 有效配置.p.trim() : '';
